@@ -140,7 +140,8 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
     }
 
     try {
-      await env.DB.prepare(`
+      // R2-9: Check meta.changes to only count rows actually inserted (not ON CONFLICT skips)
+      const result = await env.DB.prepare(`
         INSERT INTO campaign_contacts (id, campaign_id, email, name, company, role, custom_fields)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(campaign_id, email) DO NOTHING
@@ -153,7 +154,9 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
         contact.role || null,
         JSON.stringify(customFields),
       ).run()
-      imported++
+      if (result.meta?.changes) {
+        imported++
+      }
     } catch (err: any) {
       importErrors.push(`Failed to import ${contact.email}: ${err.message}`)
     }

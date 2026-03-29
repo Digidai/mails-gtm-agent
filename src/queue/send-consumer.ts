@@ -6,6 +6,41 @@ import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 
+/**
+ * R2-6: Atomically claim a send slot against the global daily send limit.
+ * Uses INSERT ... ON CONFLICT DO UPDATE with a WHERE guard on sent_count < limit.
+ * Returns true if a slot was successfully claimed, false if the limit is reached.
+ *
+ * We use a dedicated '__global__' campaign_id row in daily_stats to track the
+ * cross-campaign total atomically. The per-campaign rows are still maintained
+ * separately for reporting.
+ */
+async function claimGlobalSendSlot(env: Env): Promise<boolean> {
+  const limit = parseInt(env.DAILY_SEND_LIMIT || '100', 10)
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Try to increment existing global row (only if below limit)
+  const updateResult = await env.DB.prepare(
+    "UPDATE daily_stats SET sent_count = sent_count + 1 WHERE campaign_id = '__global__' AND date = ? AND sent_count < ?",
+  ).bind(today, limit).run()
+
+  if (updateResult.meta?.changes) return true
+
+  // Row may not exist yet — try to insert with sent_count=1
+  const insertResult = await env.DB.prepare(
+    "INSERT INTO daily_stats (id, campaign_id, date, sent_count) VALUES (?, '__global__', ?, 1) ON CONFLICT(campaign_id, date) DO NOTHING",
+  ).bind(crypto.randomUUID().replace(/-/g, ''), today).run()
+
+  if (insertResult.meta?.changes) return true
+
+  // Insert did nothing (row exists but limit reached) — one more try in case of race
+  const retryResult = await env.DB.prepare(
+    "UPDATE daily_stats SET sent_count = sent_count + 1 WHERE campaign_id = '__global__' AND date = ? AND sent_count < ?",
+  ).bind(today, limit).run()
+
+  return !!(retryResult.meta?.changes)
+}
+
 /** Terminal statuses shared by both v1 and v2 engines */
 export const TERMINAL_STATUSES = [
   'unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped', 'not_interested', 'interested', 'error',
@@ -62,6 +97,13 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     return
   }
 
+  // R2-5: Skip if campaign is no longer active (e.g. paused/completed while message was queued)
+  if (campaign.status !== 'active') {
+    console.log(`Campaign ${campaign_id} is '${campaign.status}', skipping queued agent send for contact ${contact_id}`)
+    msg.ack()
+    return
+  }
+
   // CAN-SPAM: refuse to send without physical address (defense-in-depth, primary check is at campaign start)
   if (!campaign.physical_address?.trim()) {
     console.error(`Campaign ${campaign_id}: refusing to send without physical address (CAN-SPAM)`)
@@ -96,6 +138,16 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     ).bind(contact_id).run()
     msg.ack()
     return
+  }
+
+  // R2-6: Atomically claim a global send slot before sending (skip for dry-run)
+  if (!campaign.dry_run) {
+    const slotClaimed = await claimGlobalSendSlot(env)
+    if (!slotClaimed) {
+      console.log(`Global daily send limit reached, requeueing agent send for contact ${contact_id}`)
+      msg.retry()
+      return
+    }
   }
 
   // Generate compliance elements
@@ -288,6 +340,21 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
   if (!campaign) {
     console.error(`Campaign ${campaign_id} not found`)
     msg.ack()
+    return
+  }
+
+  // R2-5: Skip if campaign is no longer active (e.g. paused/completed while message was queued)
+  if (campaign.status !== 'active') {
+    console.log(`Campaign ${campaign_id} is '${campaign.status}', skipping queued sequence send for contact ${contact_id}`)
+    msg.ack()
+    return
+  }
+
+  // R2-6: Atomically claim a global send slot before sending
+  const slotClaimed = await claimGlobalSendSlot(env)
+  if (!slotClaimed) {
+    console.log(`Global daily send limit reached, requeueing sequence send for contact ${contact_id}`)
+    msg.retry()
     return
   }
 
