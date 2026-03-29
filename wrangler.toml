@@ -28,4 +28,4 @@ max_batch_size = 1
 max_retries = 3
 
 [triggers]
-crons = ["* * * * *", "*/10 * * * *", "*/5 * * * *"]
+crons = ["* * * * *"]

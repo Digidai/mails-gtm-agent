@@ -147,16 +147,19 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     setDefaults(env)
 
-    if (event.cron === '* * * * *') {
-      // v1 sequence engine cron (every minute)
-      ctx.waitUntil(sendCron(env))
-    }
-    if (event.cron === '*/10 * * * *') {
-      // v2 agent engine cron (every 10 minutes)
+    const minute = new Date(event.scheduledTime).getMinutes()
+
+    // All crons run from the single * * * * * trigger for reliability
+    // v1 sequence engine (every minute)
+    ctx.waitUntil(sendCron(env))
+
+    // v2 agent engine (every 10 minutes)
+    if (minute % 10 === 0) {
       ctx.waitUntil(agentCron(env))
     }
-    if (event.cron === '*/5 * * * *') {
-      // Reply processing (both engines)
+
+    // Reply processing (every 5 minutes)
+    if (minute % 5 === 0) {
       ctx.waitUntil(replyCron(env))
     }
   },
