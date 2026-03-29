@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
   custom_fields TEXT DEFAULT '{}', -- JSON
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
     'pending', 'active', 'interested', 'converted', 'stopped',
-    'unsubscribed', 'bounced',
+    'unsubscribed', 'bounced', 'error',
     -- v1 compat statuses
     'queued', 'sent', 'replied',
     'not_now', 'not_interested',
@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS send_log (
   subject TEXT,
   body TEXT,
   message_id TEXT,
+  decision_id TEXT,
   status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'failed', 'bounced', 'dry_run')),
   error TEXT,
   sent_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS send_log (
 CREATE INDEX IF NOT EXISTS idx_send_log_campaign ON send_log(campaign_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_send_log_message_id ON send_log(message_id);
 CREATE INDEX IF NOT EXISTS idx_send_log_contact_id ON send_log(contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_send_log_decision ON send_log(decision_id) WHERE decision_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS daily_stats (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

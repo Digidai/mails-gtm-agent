@@ -99,6 +99,24 @@ describe('Notify Owner', () => {
     expect(sentPayload.text).toContain('converted')
   })
 
+  test('sends campaign_error notification', async () => {
+    let sentPayload: any = null
+    globalThis.fetch = (async (_url: string, opts?: any) => {
+      sentPayload = JSON.parse(opts.body)
+      return new Response(JSON.stringify({ id: 'msg-1' }))
+    }) as any
+
+    await notifyOwner(mockEnv(), mockCampaign(), 'campaign_error', {
+      contactEmail: 'alice@acme.com',
+      errorMessage: 'Send API returned 401: Unauthorized. Campaign has been paused.',
+    })
+
+    expect(sentPayload).not.toBeNull()
+    expect(sentPayload.subject).toContain('Campaign paused')
+    expect(sentPayload.text).toContain('automatically paused')
+    expect(sentPayload.text).toContain('401')
+  })
+
   test('does not throw on notification failure', async () => {
     globalThis.fetch = (async () => {
       throw new Error('Network error')

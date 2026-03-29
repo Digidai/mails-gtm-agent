@@ -103,6 +103,16 @@ describe('Hard Rules', () => {
     expect(result).toBe('stop')
   })
 
+  test('returns stop for terminal status: interested', () => {
+    const result = checkHardRules(mockContact({ status: 'interested' }), [], mockCampaign())
+    expect(result).toBe('stop')
+  })
+
+  test('returns stop for terminal status: error', () => {
+    const result = checkHardRules(mockContact({ status: 'error' }), [], mockCampaign())
+    expect(result).toBe('stop')
+  })
+
   test('returns stop for terminal status: do_not_contact', () => {
     const result = checkHardRules(mockContact({ status: 'do_not_contact' }), [], mockCampaign())
     expect(result).toBe('stop')
