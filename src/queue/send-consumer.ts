@@ -102,13 +102,8 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
       fullBody,
     ).run()
 
-    // Update contact tracking
-    const now = new Date().toISOString()
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, updated_at = ? WHERE id = ?",
-    ).bind(now, now, contact_id).run()
-
-    // Record event even in dry-run
+    // Record event in dry-run (but do NOT increment emails_sent counter,
+    // as that feeds into max_emails hard-rule and would corrupt real counts)
     await recordEvent(env, campaign_id, contact_id, 'email_sent', {
       subject, angle, decision_id, dry_run: true,
     })
@@ -172,41 +167,31 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   const messageId = sendData.id || sendData.provider_id || sendData.message_id || ''
 
   try {
-    // Update contact
+    // Batch all post-send DB writes for atomicity and efficiency
     const now = new Date().toISOString()
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, sent_message_id = ?, updated_at = ? WHERE id = ?",
-    ).bind(now, messageId, now, contact_id).run()
-
-    // Log send
-    await env.DB.prepare(`
-      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
-      VALUES (?, ?, ?, 0, ?, ?, ?, 'sent')
-    `).bind(
-      crypto.randomUUID().replace(/-/g, ''),
-      campaign_id,
-      contact_id,
-      subject,
-      fullBody,
-      messageId,
-    ).run()
-
-    // Record event
-    await recordEvent(env, campaign_id, contact_id, 'email_sent', {
-      subject, angle, decision_id, message_id: messageId,
-    })
-
-    // Update daily stats
     const today = now.slice(0, 10)
-    await env.DB.prepare(`
-      INSERT INTO daily_stats (id, campaign_id, date, sent_count)
-      VALUES (?, ?, ?, 1)
-      ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
-    `).bind(
-      crypto.randomUUID().replace(/-/g, ''),
-      campaign_id,
-      today,
-    ).run()
+    const sendLogId = crypto.randomUUID().replace(/-/g, '')
+    const eventId = crypto.randomUUID().replace(/-/g, '')
+    const statsId = crypto.randomUUID().replace(/-/g, '')
+
+    await env.DB.batch([
+      // Update contact
+      env.DB.prepare(
+        "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, sent_message_id = ?, updated_at = ? WHERE id = ?",
+      ).bind(now, messageId, now, contact_id),
+      // Log send
+      env.DB.prepare(
+        "INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status) VALUES (?, ?, ?, 0, ?, ?, ?, 'sent')",
+      ).bind(sendLogId, campaign_id, contact_id, subject, fullBody, messageId),
+      // Record event
+      env.DB.prepare(
+        "INSERT INTO events (id, campaign_id, contact_id, event_type, event_data, created_at) VALUES (?, ?, ?, 'email_sent', ?, ?)",
+      ).bind(eventId, campaign_id, contact_id, JSON.stringify({ subject, angle, decision_id, message_id: messageId }), now),
+      // Update daily stats
+      env.DB.prepare(
+        "INSERT INTO daily_stats (id, campaign_id, date, sent_count) VALUES (?, ?, ?, 1) ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1",
+      ).bind(statsId, campaign_id, today),
+    ])
   } catch (dbErr) {
     // Email was already sent — log the DB failure but do NOT retry
     console.error(`[CRITICAL] Email sent to ${to} (msgId=${messageId}) but post-send DB update failed:`, dbErr)

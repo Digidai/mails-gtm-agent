@@ -1,5 +1,5 @@
 import { Env, Campaign, CampaignContact, Event, KnowledgeBase, AgentDecision } from '../types'
-import { callLLM } from '../llm/openrouter'
+import { callLLM, extractJson } from '../llm/openrouter'
 import { checkHardRules } from './rules'
 import { truncateKnowledgeBase } from '../knowledge/generate'
 
@@ -49,10 +49,10 @@ export async function makeDecision(
   try {
     const raw = await callLLM(env, systemPrompt, userPrompt)
 
-    // Extract JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as AgentDecision
+    // Extract JSON from response (balanced brace extraction)
+    const jsonStr = extractJson(raw)
+    if (jsonStr) {
+      const parsed = JSON.parse(jsonStr) as AgentDecision
 
       // Validate action
       if (!['send', 'wait', 'stop'].includes(parsed.action)) {

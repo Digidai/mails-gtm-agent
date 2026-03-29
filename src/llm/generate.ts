@@ -1,5 +1,5 @@
 import { Env, GenerateResult, CampaignContact, Campaign, CampaignStep } from '../types'
-import { callLLM } from './openrouter'
+import { callLLM, extractJson } from './openrouter'
 
 /**
  * Sanitize user-provided data before embedding in LLM prompt.
@@ -81,10 +81,10 @@ export async function generateEmail(
       const userPrompt = buildUserPrompt(step, stepNumber)
       const raw = await callLLM(env, systemPrompt, userPrompt)
 
-      // Extract JSON from response (handle markdown code blocks)
-      const jsonMatch = raw.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as GenerateResult
+      // Extract JSON from response (balanced brace extraction)
+      const jsonStr = extractJson(raw)
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr) as GenerateResult
         if (parsed.subject && parsed.body) {
           return parsed
         }

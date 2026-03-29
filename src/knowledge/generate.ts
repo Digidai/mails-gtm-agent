@@ -1,5 +1,5 @@
 import { Env, KnowledgeBase } from '../types'
-import { callLLM } from '../llm/openrouter'
+import { callLLM, extractJson } from '../llm/openrouter'
 
 const EXTRACT_SYSTEM_PROMPT = `Extract product information from this markdown content.
 Return ONLY valid JSON:
@@ -99,13 +99,13 @@ export async function generateKnowledgeBase(
   // 2. Use LLM to extract structured knowledge (limit to 15k chars to control token cost)
   const raw = await callLLM(env, EXTRACT_SYSTEM_PROMPT, markdown.slice(0, 15000))
 
-  // Parse JSON from LLM response
-  const jsonMatch = raw.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) {
+  // Parse JSON from LLM response (balanced brace extraction)
+  const jsonStr = extractJson(raw)
+  if (!jsonStr) {
     throw new Error('LLM did not return valid JSON')
   }
 
-  const parsed = JSON.parse(jsonMatch[0]) as KnowledgeBase
+  const parsed = JSON.parse(jsonStr) as KnowledgeBase
 
   // Validate minimum fields
   if (!parsed.product_name && !parsed.description) {

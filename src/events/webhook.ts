@@ -23,11 +23,13 @@ async function verifyWebhookSignature(
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 
-  // Constant-time comparison
-  if (expected.length !== signature.length) return false
+  // Constant-time comparison via SHA-256 hashing to prevent length leakage
+  const encoder2 = new TextEncoder()
+  const hashExpected = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder2.encode(expected)))
+  const hashSignature = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder2.encode(signature)))
   let diff = 0
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i)
+  for (let i = 0; i < hashExpected.length; i++) {
+    diff |= hashExpected[i] ^ hashSignature[i]
   }
   return diff === 0
 }

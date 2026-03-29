@@ -21,6 +21,19 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
     })
   }
 
+  // GET: show confirmation page; POST: execute unsubscribe
+  // This prevents email link scanners / preview bots from auto-unsubscribing users.
+  if (request.method === 'GET') {
+    return new Response(
+      unsubscribeConfirmHtml(payload.email, token),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      },
+    )
+  }
+
+  // POST — actually execute the unsubscribe
   // Record unsubscribe — campaign-specific + global
   try {
     // Campaign-specific record
@@ -69,6 +82,69 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+function unsubscribeConfirmHtml(email: string, token: string): string {
+  const maskedEmail = maskEmail(email)
+  const safeToken = escapeHtml(token)
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm Unsubscribe</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      max-width: 400px;
+      text-align: center;
+    }
+    .icon { font-size: 3rem; margin-bottom: 1rem; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+    p { color: #666; line-height: 1.5; }
+    button {
+      background: #dc3545;
+      color: white;
+      border: none;
+      padding: 0.75rem 2rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: 1rem;
+    }
+    button:hover { background: #c82333; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#9993;</div>
+    <h1>Confirm Unsubscribe</h1>
+    <p>Are you sure you want to unsubscribe <strong>${escapeHtml(maskedEmail)}</strong> from future emails?</p>
+    <form method="POST" action="/unsubscribe?token=${safeToken}">
+      <button type="submit">Yes, Unsubscribe Me</button>
+    </form>
+  </div>
+</body>
+</html>`
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@')
+  if (!domain) return email
+  if (local.length <= 2) return local + '@' + domain
+  return local[0] + '***' + local[local.length - 1] + '@' + domain
 }
 
 function unsubscribeHtml(title: string, message: string, success: boolean): string {
