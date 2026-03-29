@@ -1,0 +1,16 @@
+{
+  "name": "mails-gtm-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "bun test",
+    "db:init": "wrangler d1 execute mails-gtm --file=schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "wrangler": "^3.99.0",
+    "bun-types": "^1.1.0"
+  }
+}

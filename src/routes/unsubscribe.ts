@@ -1,0 +1,92 @@
+import { Env } from '../types'
+import { verifyUnsubscribeToken } from '../compliance/unsubscribe'
+
+export async function handleUnsubscribeRoute(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url)
+  const token = url.searchParams.get('token')
+
+  if (!token) {
+    return new Response(unsubscribeHtml('Invalid link', 'The unsubscribe link is missing or malformed.', false), {
+      status: 400,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })
+  }
+
+  const payload = await verifyUnsubscribeToken(token, env.ADMIN_TOKEN)
+
+  if (!payload) {
+    return new Response(unsubscribeHtml('Invalid link', 'This unsubscribe link is expired or invalid.', false), {
+      status: 400,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })
+  }
+
+  // Record unsubscribe
+  try {
+    await env.DB.prepare(`
+      INSERT INTO unsubscribes (id, email, campaign_id)
+      VALUES (?, ?, ?)
+      ON CONFLICT(email, campaign_id) DO NOTHING
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      payload.email,
+      payload.campaign_id,
+    ).run()
+
+    // Update contact status
+    await env.DB.prepare(`
+      UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now')
+      WHERE campaign_id = ? AND email = ?
+    `).bind(payload.campaign_id, payload.email).run()
+  } catch (err) {
+    console.error('Unsubscribe error:', err)
+  }
+
+  return new Response(
+    unsubscribeHtml('Unsubscribed', 'You have been successfully unsubscribed. You will no longer receive emails from this campaign.', true),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    },
+  )
+}
+
+function unsubscribeHtml(title: string, message: string, success: boolean): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      max-width: 400px;
+      text-align: center;
+    }
+    .icon { font-size: 3rem; margin-bottom: 1rem; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+    p { color: #666; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">${success ? '&#10003;' : '&#10007;'}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </div>
+</body>
+</html>`
+}
