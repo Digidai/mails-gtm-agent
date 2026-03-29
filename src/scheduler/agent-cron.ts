@@ -40,10 +40,12 @@ export async function agentCron(env: Env): Promise<void> {
       `).bind(campaign.id, now).run()
 
       // 4. Select contacts due for evaluation
+      // P1-5: 'interested' is now terminal — agent should NOT continue evaluating interested contacts.
+      // Once a contact is marked interested, the owner is notified and automation stops.
       const contacts = await env.DB.prepare(`
         SELECT id, campaign_id FROM campaign_contacts
         WHERE campaign_id = ?
-          AND status IN ('pending', 'active', 'interested')
+          AND status IN ('pending', 'active')
           AND (next_check_at IS NULL OR next_check_at <= ?)
           AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, '-5 minutes'))
         ORDER BY next_check_at ASC, created_at ASC

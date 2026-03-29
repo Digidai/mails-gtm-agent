@@ -53,20 +53,43 @@ async function _replyCron(env: Env): Promise<void> {
     return
   }
 
-  for (const msg of messages) {
-    const fromEmail = extractEmail(msg.from || msg.from_address || '')
-    if (!fromEmail) continue
+  // P1-4: Track the timestamp of the last successfully processed message
+  // instead of blindly advancing to now()
+  let lastSuccessfulReceivedAt: string | null = null
 
-    // Find ALL matching contacts across ALL active campaigns
+  for (const msg of messages) {
+    const msgReceivedAt = msg.received_at || msg.created_at || ''
+
+    const fromEmail = extractEmail(msg.from || msg.from_address || '')
+    if (!fromEmail) {
+      // No valid sender — still count as processed (not an error)
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
+      continue
+    }
+
+    // P1-3: Only match contacts that we actually sent to (last_sent_at IS NOT NULL),
+    // ordered by last_sent_at DESC so we attribute to the most recently contacted campaign first.
+    // Limit to 1 to avoid broadcasting replies across all campaigns.
     const contacts = await env.DB.prepare(`
       SELECT cc.*, c.engine, c.id as _campaign_id, c.name as _campaign_name
       FROM campaign_contacts cc
       JOIN campaigns c ON c.id = cc.campaign_id
       WHERE cc.email = ? AND c.status = 'active'
         AND cc.status IN ('sent', 'replied', 'active', 'interested', 'pending')
+        AND cc.last_sent_at IS NOT NULL
+      ORDER BY cc.last_sent_at DESC
+      LIMIT 1
     `).bind(fromEmail.toLowerCase()).all<CampaignContact & { engine: string; _campaign_id: string; _campaign_name: string }>()
 
-    if (!contacts.results?.length) continue
+    if (!contacts.results?.length) {
+      // No matching contacts — still count as processed
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
+      continue
+    }
 
     // Fetch full email body (inbox list doesn't include body_text)
     let replyText = msg.text || msg.body_text || msg.body || msg.snippet || ''
@@ -84,14 +107,20 @@ async function _replyCron(env: Env): Promise<void> {
 
     if (!replyText.trim()) {
       console.warn(`Empty reply body from ${fromEmail}, skipping classification`)
+      // Still count as processed (not a failure)
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
       continue
     }
 
-    // Classify the reply once (shared across campaigns)
+    // Classify the reply once
     const classification = await classifyReply(env, replyText)
     const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
 
-    // Process for each matching contact
+    let msgProcessedOk = true
+
+    // Process for the matched contact
     for (const contact of contacts.results) {
       try {
         const campaign = {
@@ -112,14 +141,22 @@ async function _replyCron(env: Env): Promise<void> {
         await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText)
       } catch (err) {
         console.error(`Reply processing error for contact ${contact.id}:`, err)
+        msgProcessedOk = false
       }
+    }
+
+    // P1-4: Only advance cursor for successfully processed messages
+    if (msgProcessedOk && msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+      lastSuccessfulReceivedAt = msgReceivedAt
     }
   }
 
-  // Update all active campaigns' last_inbox_check_at
-  await env.DB.prepare(
-    "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE status = 'active'"
-  ).run()
+  // P1-4: Only advance cursor to the last successfully processed message's timestamp
+  if (lastSuccessfulReceivedAt) {
+    await env.DB.prepare(
+      "UPDATE campaigns SET last_inbox_check_at = ? WHERE status = 'active'"
+    ).bind(lastSuccessfulReceivedAt).run()
+  }
 }
 
 async function handleIntent(

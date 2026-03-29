@@ -1,11 +1,10 @@
 import { Env, Campaign } from './types'
 import { mailsFetch } from './mails-api'
 
-type NotifyType = 'interested_reply' | 'conversion'
+type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error'
 
 /**
  * Send a notification email to the campaign owner (campaign.from_email / mailbox).
- * MVP: only two notification types.
  */
 export async function notifyOwner(
   env: Env,
@@ -16,6 +15,7 @@ export async function notifyOwner(
     contactName?: string | null
     replyText?: string
     conversionType?: string
+    errorMessage?: string
   },
 ): Promise<void> {
   const to = campaign.from_email || env.MAILS_MAILBOX
@@ -46,6 +46,18 @@ export async function notifyOwner(
         `Campaign: ${campaign.name}`,
         `Email: ${data.contactEmail}`,
         `Type: ${data.conversionType || 'signup'}`,
+      ].join('\n')
+      break
+
+    case 'campaign_error':
+      subject = `[mails-gtm] Campaign paused: ${campaign.name}`
+      body = [
+        `Campaign "${campaign.name}" has been automatically paused due to a send error.`,
+        '',
+        `Contact: ${data.contactEmail}`,
+        `Error: ${data.errorMessage || 'Unknown error'}`,
+        '',
+        'Action: Check your API credentials and resume the campaign when ready.',
       ].join('\n')
       break
   }

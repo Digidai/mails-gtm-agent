@@ -3,11 +3,12 @@ import { generateEmail } from '../llm/generate'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
 import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
 import { recordEvent } from '../events/record'
+import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 
 /** Terminal statuses shared by both v1 and v2 engines */
 export const TERMINAL_STATUSES = [
-  'unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped', 'not_interested',
+  'unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped', 'not_interested', 'interested', 'error',
 ] as const
 
 export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void> {
@@ -36,6 +37,19 @@ export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void>
  */
 async function processAgentSend(message: AgentSendMessage, env: Env, msg: Message): Promise<void> {
   const { campaign_id, contact_id, mailbox, to, subject, body, angle, decision_id } = message
+
+  // P0-1: Idempotent check — skip if this decision was already sent
+  if (decision_id) {
+    const existing = await env.DB.prepare(
+      'SELECT id FROM send_log WHERE decision_id = ?',
+    ).bind(decision_id).first()
+
+    if (existing) {
+      console.log(`Decision ${decision_id} already sent, skipping (idempotent)`)
+      msg.ack()
+      return
+    }
+  }
 
   // Fetch campaign for compliance fields
   const campaign = await env.DB.prepare(
@@ -93,14 +107,15 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   // Dry-run mode: log but don't send
   if (campaign.dry_run) {
     await env.DB.prepare(`
-      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, status)
-      VALUES (?, ?, ?, 0, ?, ?, 'dry_run')
+      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, decision_id, status)
+      VALUES (?, ?, ?, 0, ?, ?, ?, 'dry_run')
     `).bind(
       crypto.randomUUID().replace(/-/g, ''),
       campaign_id,
       contact_id,
       subject,
       fullBody,
+      decision_id || null,
     ).run()
 
     // Record event in dry-run (but do NOT increment emails_sent counter,
@@ -131,25 +146,53 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     const errText = await sendRes.text()
 
     await env.DB.prepare(`
-      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, status, error)
-      VALUES (?, ?, ?, 0, ?, ?, 'failed', ?)
+      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, decision_id, status, error)
+      VALUES (?, ?, ?, 0, ?, ?, ?, 'failed', ?)
     `).bind(
       crypto.randomUUID().replace(/-/g, ''),
       campaign_id,
       contact_id,
       subject,
       fullBody,
+      decision_id || null,
       errText,
     ).run()
 
-    const nonRetryable = [400, 401, 403, 422].includes(sendRes.status)
-    if (nonRetryable) {
+    // P1-6: Differentiate error types — only real bounces should mark as bounced
+    if ([401, 403].includes(sendRes.status)) {
+      // System-level auth error: pause campaign, notify owner, do NOT mark contact as bounced
       await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'bounced', updated_at = datetime('now') WHERE id = ?",
+        "UPDATE campaigns SET status = 'paused', updated_at = datetime('now') WHERE id = ?",
+      ).bind(campaign_id).run()
+
+      await recordEvent(env, campaign_id, contact_id, 'campaign_error', {
+        error: errText.slice(0, 500), status_code: sendRes.status,
+        reason: 'API authentication/authorization failure — campaign paused',
+      })
+
+      // Best-effort notification to owner
+      try {
+        const fullCampaign = await env.DB.prepare('SELECT * FROM campaigns WHERE id = ?').bind(campaign_id).first<Campaign>()
+        if (fullCampaign) {
+          await notifyOwner(env, fullCampaign, 'campaign_error', {
+            contactEmail: to,
+            errorMessage: `Send API returned ${sendRes.status}: ${errText.slice(0, 200)}. Campaign has been paused.`,
+          })
+        }
+      } catch (_notifyErr) {
+        console.error('Failed to notify owner about campaign error:', _notifyErr)
+      }
+      msg.ack()
+      return
+    }
+
+    if ([400, 422].includes(sendRes.status)) {
+      // Contact-level error (bad address, invalid payload) — mark as error, NOT bounced
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET status = 'error', updated_at = datetime('now') WHERE id = ?",
       ).bind(contact_id).run()
 
-      // Record bounce event so the agent sees it in the timeline
-      await recordEvent(env, campaign_id, contact_id, 'bounce', {
+      await recordEvent(env, campaign_id, contact_id, 'contact_error', {
         error: errText.slice(0, 500), status_code: sendRes.status,
       })
       msg.ack()
@@ -179,10 +222,10 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
       env.DB.prepare(
         "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, sent_message_id = ?, updated_at = ? WHERE id = ?",
       ).bind(now, messageId, now, contact_id),
-      // Log send
+      // Log send (with decision_id for idempotency)
       env.DB.prepare(
-        "INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status) VALUES (?, ?, ?, 0, ?, ?, ?, 'sent')",
-      ).bind(sendLogId, campaign_id, contact_id, subject, fullBody, messageId),
+        "INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, decision_id, status) VALUES (?, ?, ?, 0, ?, ?, ?, ?, 'sent')",
+      ).bind(sendLogId, campaign_id, contact_id, subject, fullBody, messageId, decision_id || null),
       // Record event
       env.DB.prepare(
         "INSERT INTO events (id, campaign_id, contact_id, event_type, event_data, created_at) VALUES (?, ?, ?, 'email_sent', ?, ?)",
@@ -223,8 +266,17 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     return
   }
 
-  if (contact.status === 'sent' && contact.current_step >= step_number && contact.sent_message_id) {
-    console.log(`Contact ${contact_id} already sent for step ${step_number}, skipping`)
+  // P0-2: Check if this step was already completed.
+  // After a non-last step, status goes back to 'pending' with current_step incremented,
+  // so we must check current_step > step_number (step already done) OR
+  // status='sent' at the final step.
+  if (contact.current_step > step_number) {
+    console.log(`Contact ${contact_id} already past step ${step_number} (current_step=${contact.current_step}), skipping`)
+    msg.ack()
+    return
+  }
+  if (contact.status === 'sent' && contact.current_step === step_number && contact.sent_message_id) {
+    console.log(`Contact ${contact_id} already sent for final step ${step_number}, skipping`)
     msg.ack()
     return
   }
@@ -287,12 +339,35 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
       errText,
     ).run()
 
-    const nonRetryable = [400, 401, 403, 422].includes(sendRes.status)
-    if (nonRetryable) {
+    // P1-6: Differentiate error types for v1 engine too
+    if ([401, 403].includes(sendRes.status)) {
+      // System-level auth error: pause campaign, do NOT mark contact as bounced
       await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'bounced', updated_at = datetime('now') WHERE id = ?",
+        "UPDATE campaigns SET status = 'paused', updated_at = datetime('now') WHERE id = ?",
+      ).bind(campaign_id).run()
+
+      console.error(`Auth error (${sendRes.status}) for campaign ${campaign_id}, pausing campaign`)
+
+      try {
+        if (campaign) {
+          await notifyOwner(env, campaign, 'campaign_error', {
+            contactEmail: contact.email,
+            errorMessage: `Send API returned ${sendRes.status}: ${errText.slice(0, 200)}. Campaign has been paused.`,
+          })
+        }
+      } catch (_notifyErr) {
+        console.error('Failed to notify owner about campaign error:', _notifyErr)
+      }
+      msg.ack()
+      return
+    }
+
+    if ([400, 422].includes(sendRes.status)) {
+      // Contact-level error (bad address, invalid payload) — mark as error, NOT bounced
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET status = 'error', updated_at = datetime('now') WHERE id = ?",
       ).bind(contact_id).run()
-      console.error(`Non-retryable send error (${sendRes.status}) for contact ${contact_id}, marking as bounced`)
+      console.error(`Contact-level send error (${sendRes.status}) for contact ${contact_id}, marking as error`)
       msg.ack()
       return
     }
