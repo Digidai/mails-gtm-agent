@@ -1,6 +1,7 @@
 import { ContactImportRow } from '../types'
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MAX_CONTACTS = 10000
 
 export interface CsvParseResult {
   contacts: ContactImportRow[]
@@ -39,6 +40,11 @@ export function parseCsv(csvText: string): CsvParseResult {
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim()
     if (!line) continue
+
+    if (contacts.length >= MAX_CONTACTS) {
+      errors.push(`Row ${i + 1}: contact limit reached (max ${MAX_CONTACTS}), remaining rows skipped`)
+      break
+    }
 
     const values = parseCsvLine(line)
     const row: Record<string, string> = {}

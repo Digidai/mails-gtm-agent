@@ -28,6 +28,13 @@ async function processMessage(message: SendMessage, env: Env): Promise<void> {
     return
   }
 
+  // Skip contacts in terminal states
+  const terminalStatuses = ['unsubscribed', 'bounced', 'do_not_contact', 'not_interested']
+  if (terminalStatuses.includes(contact.status)) {
+    console.log(`Contact ${contact_id} is in terminal status '${contact.status}', skipping`)
+    return
+  }
+
   // Idempotency check: if already sent for this step
   if (contact.status === 'sent' && contact.current_step >= step_number && contact.sent_message_id) {
     console.log(`Contact ${contact_id} already sent for step ${step_number}, skipping`)
@@ -60,7 +67,7 @@ async function processMessage(message: SendMessage, env: Env): Promise<void> {
   const { subject, body } = await generateEmail(env, campaign, contact, step_number)
 
   // Generate unsubscribe token and URL
-  const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.ADMIN_TOKEN)
+  const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
 
   // Add compliance footer
@@ -101,7 +108,17 @@ async function processMessage(message: SendMessage, env: Env): Promise<void> {
       errText,
     ).run()
 
-    // Reset contact to pending for retry by cron
+    // Non-retryable errors: mark as failed permanently to avoid infinite retry loop
+    const nonRetryable = [400, 401, 403, 422].includes(sendRes.status)
+    if (nonRetryable) {
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET status = 'bounced', updated_at = datetime('now') WHERE id = ?"
+      ).bind(contact_id).run()
+      console.error(`Non-retryable send error (${sendRes.status}) for contact ${contact_id}, marking as bounced`)
+      return // Don't throw -- ack the message since retrying won't help
+    }
+
+    // Retryable errors (5xx, timeouts): reset to pending for retry by cron
     await env.DB.prepare(
       "UPDATE campaign_contacts SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
     ).bind(contact_id).run()
@@ -109,8 +126,9 @@ async function processMessage(message: SendMessage, env: Env): Promise<void> {
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
 
+  // mails-worker /api/send returns { id, provider_id }
   const sendData = await sendRes.json() as any
-  const messageId = sendData.message_id || sendData.id || ''
+  const messageId = sendData.id || sendData.provider_id || sendData.message_id || ''
 
   // Calculate next_send_at for the next step
   const steps: CampaignStep[] = JSON.parse(campaign.steps || '[]')

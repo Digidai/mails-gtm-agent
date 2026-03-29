@@ -17,6 +17,10 @@ function buildUserPrompt(step: CampaignStep, stepNumber: number): string {
   return `Write follow-up email #${stepNumber + 1}. Be brief, reference the previous email, and provide additional value.`
 }
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export function applyTemplate(template: string, contact: CampaignContact): string {
   const custom = JSON.parse(contact.custom_fields || '{}')
   let result = template
@@ -25,7 +29,8 @@ export function applyTemplate(template: string, contact: CampaignContact): strin
   result = result.replace(/\{\{role\}\}/g, contact.role || '')
   result = result.replace(/\{\{email\}\}/g, contact.email)
   for (const [key, value] of Object.entries(custom)) {
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value))
+    // Escape key to prevent ReDoS from user-controlled CSV column names
+    result = result.replace(new RegExp(`\\{\\{${escapeRegex(key)}\\}\\}`, 'g'), String(value))
   }
   return result
 }

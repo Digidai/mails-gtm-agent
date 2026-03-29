@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS send_log (
 
 CREATE INDEX IF NOT EXISTS idx_send_log_campaign ON send_log(campaign_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_send_log_message_id ON send_log(message_id);
+CREATE INDEX IF NOT EXISTS idx_send_log_contact_id ON send_log(contact_id);
 
 CREATE TABLE IF NOT EXISTS daily_stats (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

@@ -28,21 +28,28 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     return json({ error: 'Missing email' }, 400)
   }
 
-  // Delete from campaign_contacts
+  // 1. Delete from send_log using subquery (single query instead of N+1 loop)
+  const sendLogResult = await env.DB.prepare(
+    'DELETE FROM send_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+  ).bind(email).run()
+
+  // 2. Delete from campaign_contacts
   const contactsResult = await env.DB.prepare(
     'DELETE FROM campaign_contacts WHERE email = ?'
   ).bind(email).run()
 
-  // Delete from send_log (find via contacts - already deleted, so match by email in send_log via join)
-  // We can't easily join since contacts are deleted. Just delete matching unsubscribes.
+  // 3. Delete from unsubscribes
   const unsubResult = await env.DB.prepare(
     'DELETE FROM unsubscribes WHERE email = ?'
   ).bind(email).run()
 
-  // Add to unsubscribes as a global block to prevent future sends
+  // 4. Delete from daily_stats is not needed (aggregated, no PII)
+
+  // 5. Add to unsubscribes as a global block to prevent future sends
+  // Use campaign_id = '__gdpr__' because UNIQUE(email, campaign_id) with NULL won't conflict properly
   await env.DB.prepare(`
-    INSERT INTO unsubscribes (id, email, reason)
-    VALUES (?, ?, 'GDPR deletion request')
+    INSERT INTO unsubscribes (id, email, campaign_id, reason)
+    VALUES (?, ?, '__gdpr__', 'GDPR deletion request')
     ON CONFLICT(email, campaign_id) DO NOTHING
   `).bind(
     crypto.randomUUID().replace(/-/g, ''),
@@ -53,6 +60,7 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     email,
     deleted: {
       contacts: contactsResult.meta?.changes || 0,
+      send_logs: sendLogResult.meta?.changes || 0,
       unsubscribes: unsubResult.meta?.changes || 0,
     },
     note: 'Email has been added to global suppression list',

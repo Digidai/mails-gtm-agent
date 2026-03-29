@@ -22,8 +22,9 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
   const since = campaign.last_inbox_check_at || campaign.created_at
   const apiUrl = env.MAILS_API_URL
 
-  // Fetch inbound emails since last check
-  const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&since=${encodeURIComponent(since)}`, {
+  // Fetch inbound emails (mails-worker inbox API does not support a 'since' filter,
+  // so we fetch recent emails and filter client-side by received_at)
+  const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&limit=100`, {
     headers: {
       'Authorization': `Bearer ${env.MAILS_API_KEY}`,
     },
@@ -35,7 +36,13 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
   }
 
   const data = await res.json() as any
-  const messages = data.messages || data.emails || []
+  const allMessages = data.messages || data.emails || []
+
+  // Client-side filter: only process emails received after last check
+  const messages = allMessages.filter((msg: any) => {
+    const receivedAt = msg.received_at || msg.created_at || ''
+    return receivedAt > since
+  })
 
   if (!messages.length) {
     // Update last check time even if no messages
@@ -61,8 +68,11 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
     const replyText = msg.text || msg.body || msg.snippet || ''
     const classification = await classifyReply(env, replyText)
 
+    // Override to unclear if confidence is below threshold
+    const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
+
     // Execute action based on intent
-    await handleIntent(env, campaign, contact, classification.intent, classification.confidence, classification.resume_date)
+    await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date)
   }
 
   // Update last check time

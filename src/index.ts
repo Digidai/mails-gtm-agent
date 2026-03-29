@@ -7,18 +7,35 @@ import { sendCron } from './scheduler/send-cron'
 import { replyCron } from './scheduler/reply-cron'
 import { sendConsumer } from './queue/send-consumer'
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Max-Age': '86400',
+}
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
+}
+
+/** Constant-time string comparison to prevent timing attacks on auth tokens */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return diff === 0
 }
 
 function checkAuth(request: Request, env: Env): boolean {
   const auth = request.headers.get('Authorization')
-  if (!auth) return false
-  const token = auth.replace('Bearer ', '')
-  return token === env.ADMIN_TOKEN
+  if (!auth || !auth.startsWith('Bearer ')) return false
+  const token = auth.slice(7) // "Bearer ".length === 7
+  return timingSafeEqual(token, env.ADMIN_TOKEN)
 }
 
 export default {
@@ -26,10 +43,17 @@ export default {
     const url = new URL(request.url)
     const path = url.pathname
 
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS })
+    }
+
     // Set defaults
     env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
     env.UNSUBSCRIBE_BASE_URL = env.UNSUBSCRIBE_BASE_URL || url.origin
+    env.UNSUBSCRIBE_SECRET = env.UNSUBSCRIBE_SECRET || env.ADMIN_TOKEN // fallback for backwards compat
     env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
+    env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
 
     // Public endpoint: unsubscribe
     if (path === '/unsubscribe') {
@@ -68,7 +92,9 @@ export default {
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
+    env.UNSUBSCRIBE_SECRET = env.UNSUBSCRIBE_SECRET || env.ADMIN_TOKEN
     env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
+    env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
 
     if (event.cron === '* * * * *') {
       ctx.waitUntil(sendCron(env))
@@ -80,7 +106,9 @@ export default {
 
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
+    env.UNSUBSCRIBE_SECRET = env.UNSUBSCRIBE_SECRET || env.ADMIN_TOKEN
     env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
+    env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
     await sendConsumer(batch, env)
   },
 }

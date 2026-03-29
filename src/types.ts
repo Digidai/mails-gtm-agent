@@ -6,8 +6,10 @@ export interface Env {
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email
   ADMIN_TOKEN: string         // API auth token
+  UNSUBSCRIBE_SECRET: string  // HMAC secret for unsubscribe tokens (must differ from ADMIN_TOKEN)
   UNSUBSCRIBE_BASE_URL: string // default: https://mails-gtm-agent.YOUR.workers.dev
   DAILY_SEND_LIMIT: string    // default: "100"
+  MAX_CSV_SIZE: string        // default: "5242880" (5MB)
 }
 
 export interface Campaign {

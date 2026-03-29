@@ -13,29 +13,41 @@ export async function sendCron(env: Env): Promise<void> {
 
   if (!campaigns.results?.length) return
 
-  for (const campaign of campaigns.results) {
-    // 2. Calculate daily limit (warmup)
-    const dailyLimit = calculateDailyLimit(campaign, globalLimit)
+  // 2. Get global sent count for today (across all campaigns)
+  const globalSentToday = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM send_log
+    WHERE date(sent_at) = ? AND status = 'sent'
+  `).bind(today).first<{ count: number }>()
 
-    // 3. Get today's sent count for this campaign
+  let globalRemaining = globalLimit - (globalSentToday?.count || 0)
+  if (globalRemaining <= 0) return
+
+  for (const campaign of campaigns.results) {
+    if (globalRemaining <= 0) break
+
+    // 3. Calculate per-campaign daily limit (warmup)
+    const campaignDailyLimit = calculateDailyLimit(campaign, globalLimit)
+
+    // 4. Get today's sent count for this campaign
     const sentToday = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM send_log
-      WHERE campaign_id = ? AND date(sent_at) = ?
+      WHERE campaign_id = ? AND date(sent_at) = ? AND status = 'sent'
     `).bind(campaign.id, today).first<{ count: number }>()
 
     const sentCount = sentToday?.count || 0
-    const remaining = dailyLimit - sentCount
+    const campaignRemaining = campaignDailyLimit - sentCount
+    const remaining = Math.min(campaignRemaining, globalRemaining)
 
     if (remaining <= 0) continue
 
-    // 4. Check for not_now contacts whose resume_at has passed
+    // 5. Check for not_now contacts whose resume_at has passed
     await env.DB.prepare(`
       UPDATE campaign_contacts
       SET status = 'pending', resume_at = NULL, updated_at = datetime('now')
       WHERE campaign_id = ? AND status = 'not_now' AND resume_at IS NOT NULL AND resume_at <= ?
     `).bind(campaign.id, now).run()
 
-    // 5. Select pending contacts ready to send
+    // 6. Select pending contacts ready to send
     const pendingContacts = await env.DB.prepare(`
       SELECT * FROM campaign_contacts
       WHERE campaign_id = ? AND status = 'pending' AND (next_send_at IS NULL OR next_send_at <= ?)
@@ -45,8 +57,10 @@ export async function sendCron(env: Env): Promise<void> {
 
     if (!pendingContacts.results?.length) continue
 
-    // 6. Atomically update status to 'queued' and enqueue
+    // 7. Atomically update status to 'queued' and enqueue
     for (const contact of pendingContacts.results) {
+      if (globalRemaining <= 0) break
+
       // Atomic update: only succeeds if still pending
       const updateResult = await env.DB.prepare(`
         UPDATE campaign_contacts
@@ -63,6 +77,7 @@ export async function sendCron(env: Env): Promise<void> {
       }
 
       await env.SEND_QUEUE.send(message)
+      globalRemaining--
     }
   }
 }

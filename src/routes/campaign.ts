@@ -132,6 +132,20 @@ async function startCampaign(id: string, env: Env): Promise<Response> {
     return json({ error: `Cannot start campaign in ${campaign.status} status` }, 400)
   }
 
+  // Verify campaign has contacts
+  const contactCount = await env.DB.prepare(
+    'SELECT COUNT(*) as count FROM campaign_contacts WHERE campaign_id = ?'
+  ).bind(id).first<{ count: number }>()
+
+  if (!contactCount?.count) {
+    return json({ error: 'Cannot start campaign with 0 contacts. Import contacts first.' }, 400)
+  }
+
+  // CAN-SPAM: require physical address before sending
+  if (!campaign.physical_address || !campaign.physical_address.trim()) {
+    return json({ error: 'CAN-SPAM compliance requires a physical mailing address. Update campaign with physical_address.' }, 400)
+  }
+
   const now = new Date().toISOString()
   const updates: Record<string, string> = {
     status: 'active',

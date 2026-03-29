@@ -12,7 +12,7 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
     })
   }
 
-  const payload = await verifyUnsubscribeToken(token, env.ADMIN_TOKEN)
+  const payload = await verifyUnsubscribeToken(token, env.UNSUBSCRIBE_SECRET)
 
   if (!payload) {
     return new Response(unsubscribeHtml('Invalid link', 'This unsubscribe link is expired or invalid.', false), {
@@ -51,13 +51,24 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
   )
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function unsubscribeHtml(title: string, message: string, success: boolean): string {
+  const safeTitle = escapeHtml(title)
+  const safeMessage = escapeHtml(message)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
+  <title>${safeTitle}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -84,8 +95,8 @@ function unsubscribeHtml(title: string, message: string, success: boolean): stri
 <body>
   <div class="card">
     <div class="icon">${success ? '&#10003;' : '&#10007;'}</div>
-    <h1>${title}</h1>
-    <p>${message}</p>
+    <h1>${safeTitle}</h1>
+    <p>${safeMessage}</p>
   </div>
 </body>
 </html>`

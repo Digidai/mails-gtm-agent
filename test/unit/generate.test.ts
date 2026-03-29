@@ -11,8 +11,10 @@ function mockEnv(): Env {
     MAILS_API_KEY: 'test-mails-key',
     MAILS_MAILBOX: 'test@example.com',
     ADMIN_TOKEN: 'test-admin',
+    UNSUBSCRIBE_SECRET: 'test-unsub-secret',
     UNSUBSCRIBE_BASE_URL: 'https://test.example.com',
     DAILY_SEND_LIMIT: '100',
+    MAX_CSV_SIZE: '5242880',
     DB: {} as any,
     SEND_QUEUE: {} as any,
   }

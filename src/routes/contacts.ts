@@ -29,13 +29,13 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
 
   if (contentType.includes('multipart/form-data')) {
     const formData = await request.formData()
-    const file = formData.get('file')
+    const file = formData.get('file') as unknown
     campaignId = formData.get('campaign_id') as string
 
-    if (!file || !(file instanceof File)) {
+    if (!file || typeof file === 'string') {
       return json({ error: 'No CSV file uploaded' }, 400)
     }
-    csvText = await file.text()
+    csvText = await (file as Blob).text()
   } else {
     const body = await request.json() as any
     csvText = body.csv
@@ -48,6 +48,12 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
 
   if (!csvText || !csvText.trim()) {
     return json({ error: 'Empty CSV data' }, 400)
+  }
+
+  // Enforce CSV size limit to prevent OOM
+  const maxCsvSize = parseInt(env.MAX_CSV_SIZE || '5242880', 10)
+  if (csvText.length > maxCsvSize) {
+    return json({ error: `CSV too large (${(csvText.length / 1024 / 1024).toFixed(1)}MB). Max: ${(maxCsvSize / 1024 / 1024).toFixed(1)}MB` }, 400)
   }
 
   // Verify campaign exists
