@@ -2,6 +2,9 @@
   "name": "mails-gtm-agent",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "mails-gtm": "cli/index.ts"
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

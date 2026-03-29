@@ -18,7 +18,53 @@ export async function handleContactsRoutes(request: Request, env: Env): Promise<
     return importContacts(request, env)
   }
 
+  // GET /api/contacts/list
+  if (path === '/api/contacts/list' && method === 'GET') {
+    return listContacts(url, env)
+  }
+
   return json({ error: 'Not Found' }, 404)
+}
+
+async function listContacts(url: URL, env: Env): Promise<Response> {
+  const campaignId = url.searchParams.get('campaign_id')
+  if (!campaignId) {
+    return json({ error: 'Missing campaign_id query parameter' }, 400)
+  }
+
+  const status = url.searchParams.get('status')
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 500)
+  const offset = parseInt(url.searchParams.get('offset') || '0', 10)
+
+  let query = 'SELECT * FROM campaign_contacts WHERE campaign_id = ?'
+  const params: any[] = [campaignId]
+
+  if (status) {
+    query += ' AND status = ?'
+    params.push(status)
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  const stmt = env.DB.prepare(query)
+  const result = await stmt.bind(...params).all()
+
+  // Get total count for pagination
+  let countQuery = 'SELECT COUNT(*) as count FROM campaign_contacts WHERE campaign_id = ?'
+  const countParams: any[] = [campaignId]
+  if (status) {
+    countQuery += ' AND status = ?'
+    countParams.push(status)
+  }
+  const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ count: number }>()
+
+  return json({
+    contacts: result.results,
+    total: countResult?.count || 0,
+    limit,
+    offset,
+  })
 }
 
 async function importContacts(request: Request, env: Env): Promise<Response> {

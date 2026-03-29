@@ -3,6 +3,9 @@ import { handleCampaignRoutes } from './routes/campaign'
 import { handleContactsRoutes } from './routes/contacts'
 import { handleUnsubscribeRoute } from './routes/unsubscribe'
 import { handleGdprRoutes } from './routes/gdpr'
+import { handleStepsRoutes } from './routes/steps'
+import { handleStatsRoutes } from './routes/stats'
+import { handlePreviewRoutes } from './routes/preview'
 import { sendCron } from './scheduler/send-cron'
 import { replyCron } from './scheduler/reply-cron'
 import { sendConsumer } from './queue/send-consumer'
@@ -69,6 +72,17 @@ export default {
     if (path.startsWith('/api/')) {
       if (!checkAuth(request, env)) {
         return jsonResponse({ error: 'Unauthorized' }, 401)
+      }
+
+      // Campaign sub-routes (steps, stats, preview) — match before generic campaign routes
+      if (/^\/api\/campaign\/[a-f0-9]+\/steps$/.test(path)) {
+        return handleStepsRoutes(request, env)
+      }
+      if (/^\/api\/campaign\/[a-f0-9]+\/stats$/.test(path)) {
+        return handleStatsRoutes(request, env)
+      }
+      if (/^\/api\/campaign\/[a-f0-9]+\/preview$/.test(path)) {
+        return handlePreviewRoutes(request, env)
       }
 
       // Campaign routes

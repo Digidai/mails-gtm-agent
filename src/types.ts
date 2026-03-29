@@ -32,9 +32,11 @@ export interface Campaign {
 }
 
 export interface CampaignStep {
+  step_number?: number
   delay_days: number
   subject_template: string
   body_template: string
+  ai_generate?: boolean
 }
 
 export interface CampaignContact {
