@@ -1,25 +1,27 @@
-name: Deploy to Cloudflare Workers
+name: Deploy Worker
 
 on:
   push:
-    branches: [main]
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - run: bun test
-
   deploy:
-    needs: test
     runs-on: ubuntu-latest
+    name: Deploy mails-gtm-agent
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - uses: cloudflare/wrangler-action@v3
+
+      - name: Inject D1 database ID
+        env:
+          D1_ID: ${{ secrets.D1_DATABASE_ID }}
+        run: sed -i "s/YOUR_D1_DATABASE_ID/${D1_ID}/" wrangler.toml
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
