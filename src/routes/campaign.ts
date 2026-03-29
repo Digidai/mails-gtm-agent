@@ -86,8 +86,8 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     if (!body.name) {
       return json({ error: 'Missing required field: name' }, 400)
     }
-    if (!body.knowledge_base && !body.product_name) {
-      return json({ error: 'Agent campaigns require either knowledge_base or product_name' }, 400)
+    if (!body.knowledge_base && !body.product_name && !body.product_url) {
+      return json({ error: 'Agent campaigns require knowledge_base, product_name, or product_url' }, 400)
     }
   }
 
