@@ -59,6 +59,7 @@ function setDefaults(env: Env, url?: URL): void {
     console.warn('[SECURITY] UNSUBSCRIBE_SECRET not set, falling back to ADMIN_TOKEN. Set a separate secret in production.')
     env.UNSUBSCRIBE_SECRET = env.ADMIN_TOKEN
   }
+  env.MAILS_MAILBOX = env.MAILS_MAILBOX || ''
   env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
   env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
   if (url) {

@@ -93,6 +93,9 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
 
   // Validate conversion_url and product_url are safe http(s) URLs
   if (body.conversion_url) {
+    if (!/^https?:\/\//i.test(body.conversion_url)) {
+      body.conversion_url = 'https://' + body.conversion_url
+    }
     try {
       const parsed = new URL(body.conversion_url)
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -104,6 +107,10 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
   }
 
   if (body.product_url) {
+    // Auto-prepend https:// if no protocol is specified
+    if (!/^https?:\/\//i.test(body.product_url)) {
+      body.product_url = 'https://' + body.product_url
+    }
     try {
       const parsed = new URL(body.product_url)
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -112,6 +119,12 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     } catch {
       return json({ error: 'product_url is not a valid URL' }, 400)
     }
+  }
+
+  // Determine from_email: explicit > env > reject
+  const fromEmail = body.from_email || env.MAILS_MAILBOX
+  if (!fromEmail) {
+    return json({ error: 'from_email is required (or set MAILS_MAILBOX environment variable)' }, 400)
   }
 
   const steps: CampaignStep[] = body.steps || [
@@ -145,7 +158,7 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     body.name,
     body.product_name || '',
     body.product_description || '',
-    body.from_email || env.MAILS_MAILBOX,
+    fromEmail,
     body.physical_address || '',
     body.ai_generate !== undefined ? (body.ai_generate ? 1 : 0) : 1,
     body.warmup_enabled !== undefined ? (body.warmup_enabled ? 1 : 0) : 1,

@@ -5,7 +5,7 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "mails-gtm"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "f5d0f258-ce84-4d8b-a43d-d4044549cc1e"
 
 # v1: send queue (shared by sequence + agent engines)
 [[queues.producers]]
