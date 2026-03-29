@@ -25,14 +25,20 @@ export async function generateKnowledgeBase(
   productUrl: string,
   env: Env,
 ): Promise<KnowledgeBase> {
+  // Auto-prepend https:// if no protocol is specified
+  if (!/^https?:\/\//i.test(productUrl)) {
+    productUrl = 'https://' + productUrl
+  }
+
   // Validate URL scheme to prevent SSRF via file://, gopher://, etc.
+  let parsedUrl: URL
   try {
-    const parsed = new URL(productUrl)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    parsedUrl = new URL(productUrl)
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       throw new Error('product_url must use http or https protocol')
     }
     // Block private/internal IPs to mitigate SSRF
-    const hostname = parsed.hostname.toLowerCase()
+    const hostname = parsedUrl.hostname.toLowerCase()
     if (
       hostname === 'localhost' ||
       hostname === '127.0.0.1' ||
@@ -45,6 +51,10 @@ export async function generateKnowledgeBase(
       hostname.endsWith('.local')
     ) {
       throw new Error('product_url must not point to private/internal addresses')
+    }
+    // Block md.genedai.me itself to prevent self-referencing fetch
+    if (hostname === 'md.genedai.me') {
+      throw new Error('product_url must not point to the markdown conversion service itself')
     }
   } catch (e) {
     if ((e as Error).message.includes('product_url')) throw e
@@ -72,6 +82,18 @@ export async function generateKnowledgeBase(
 
   if (!markdown || markdown.trim().length < 50) {
     throw new Error('Product page returned insufficient content')
+  }
+
+  // Guard: detect if md.genedai.me returned its own page instead of the target
+  const mdLower = markdown.toLowerCase()
+  if (
+    mdLower.includes('md.genedai.me') &&
+    !productUrl.includes('md.genedai.me')
+  ) {
+    throw new Error(
+      'Markdown service returned its own page content instead of the target URL. ' +
+      'Verify the product_url is publicly accessible.',
+    )
   }
 
   // 2. Use LLM to extract structured knowledge (limit to 15k chars to control token cost)

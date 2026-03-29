@@ -82,7 +82,13 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
       return json({ error: 'No CSV file uploaded' }, 400)
     }
     csvText = await (file as Blob).text()
+  } else if (contentType.includes('text/csv')) {
+    // Support raw CSV body with campaign_id in query params
+    const url = new URL(request.url)
+    campaignId = url.searchParams.get('campaign_id') || ''
+    csvText = await request.text()
   } else {
+    // Default: JSON body with { csv, campaign_id }
     const body = await request.json() as any
     csvText = body.csv
     campaignId = body.campaign_id
