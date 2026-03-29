@@ -9,6 +9,16 @@ import { notifyOwner } from '../notify'
  * reply to the correct campaign_contact(s) by from_address.
  */
 export async function replyCron(env: Env): Promise<void> {
+  console.log('[reply-cron] Starting reply check...')
+  try {
+    await _replyCron(env)
+    console.log('[reply-cron] Completed successfully')
+  } catch (err) {
+    console.error('[reply-cron] Fatal error:', err)
+  }
+}
+
+async function _replyCron(env: Env): Promise<void> {
   // Use a global KV-style marker stored in an arbitrary active campaign,
   // or fall back to the most recent last_inbox_check_at across all campaigns.
   const sinceRow = await env.DB.prepare(
@@ -63,8 +73,28 @@ export async function replyCron(env: Env): Promise<void> {
 
     if (!contacts.results?.length) continue
 
+    // Fetch full email body (inbox list doesn't include body_text)
+    let replyText = msg.text || msg.body_text || msg.body || msg.snippet || ''
+    if (!replyText && msg.id) {
+      try {
+        const emailRes = await fetch(`${apiUrl}/api/email?id=${msg.id}`, {
+          headers: { 'Authorization': `Bearer ${env.MAILS_API_KEY}` },
+        })
+        if (emailRes.ok) {
+          const emailData = await emailRes.json() as any
+          replyText = emailData.body_text || emailData.body || ''
+        }
+      } catch (err) {
+        console.error(`Failed to fetch email body for ${msg.id}:`, err)
+      }
+    }
+
+    if (!replyText.trim()) {
+      console.warn(`Empty reply body from ${fromEmail}, skipping classification`)
+      continue
+    }
+
     // Classify the reply once (shared across campaigns)
-    const replyText = msg.text || msg.body || msg.snippet || ''
     const classification = await classifyReply(env, replyText)
     const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
 
