@@ -52,23 +52,26 @@ export async function generateKnowledgeBase(
     ) {
       throw new Error('product_url must not point to private/internal addresses')
     }
-    // Block md.genedai.me itself to prevent self-referencing fetch
-    if (hostname === 'md.genedai.me') {
-      throw new Error('product_url must not point to the markdown conversion service itself')
+    // Block conversion services to prevent self-referencing fetch
+    if (hostname === 'r.jina.ai' || hostname === 'md.genedai.me') {
+      throw new Error('product_url must not point to a markdown conversion service')
     }
   } catch (e) {
     if ((e as Error).message.includes('product_url')) throw e
     throw new Error(`Invalid product_url: ${productUrl}`)
   }
 
-  // 1. Fetch markdown via md.genedai.me (with 15s timeout)
+  // 1. Fetch markdown via Jina Reader (r.jina.ai) — reliable server-side rendering
   const mdController = new AbortController()
-  const mdTimeout = setTimeout(() => mdController.abort(), 15_000)
+  const mdTimeout = setTimeout(() => mdController.abort(), 20_000)
   let mdRes: Response
   try {
     mdRes = await fetch(
-      `https://md.genedai.me/url?url=${encodeURIComponent(productUrl)}&clean=true`,
-      { signal: mdController.signal },
+      `https://r.jina.ai/${productUrl}`,
+      {
+        signal: mdController.signal,
+        headers: { 'Accept': 'text/markdown' },
+      },
     )
   } finally {
     clearTimeout(mdTimeout)
@@ -82,18 +85,6 @@ export async function generateKnowledgeBase(
 
   if (!markdown || markdown.trim().length < 50) {
     throw new Error('Product page returned insufficient content')
-  }
-
-  // Guard: detect if md.genedai.me returned its own page instead of the target
-  const mdLower = markdown.toLowerCase()
-  if (
-    mdLower.includes('md.genedai.me') &&
-    !productUrl.includes('md.genedai.me')
-  ) {
-    throw new Error(
-      'Markdown service returned its own page content instead of the target URL. ' +
-      'Verify the product_url is publicly accessible.',
-    )
   }
 
   // 2. Use LLM to extract structured knowledge (limit to 15k chars to control token cost)
