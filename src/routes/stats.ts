@@ -79,11 +79,11 @@ async function getCampaignStats(campaignId: string, env: Env): Promise<Response>
     }
 
     for (let i = 0; i < steps.length; i++) {
-      const stepNum = (steps[i] as any).step_number || i
+      const stepNum = typeof (steps[i] as any).step_number === 'number' ? (steps[i] as any).step_number : i + 1
       stepStats.push({
-        step_number: typeof (steps[i] as any).step_number === 'number' ? (steps[i] as any).step_number : i + 1,
-        sent: sentMap[i] || 0,
-        pending: pendingMap[i] || 0,
+        step_number: stepNum,
+        sent: sentMap[stepNum] || 0,
+        pending: pendingMap[stepNum] || 0,
       })
     }
   }

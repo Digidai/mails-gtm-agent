@@ -52,9 +52,9 @@ export async function contactsList(args: string[]): Promise<void> {
   const status = flags['status'] || ''
   const limit = flags['limit'] || '20'
 
-  let path = `/api/contacts/list?campaign_id=${id}&limit=${limit}`
+  let path = `/api/contacts/list?campaign_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(limit)}`
   if (status) {
-    path += `&status=${status}`
+    path += `&status=${encodeURIComponent(status)}`
   }
 
   const api = new ApiClient()

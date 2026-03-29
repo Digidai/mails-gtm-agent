@@ -126,14 +126,14 @@ describe('Stats API', () => {
         { status: 'queued', count: 5 },
       ],
       sentPerStep: [
-        { step_number: 0, count: 65 },
-        { step_number: 1, count: 30 },
-        { step_number: 2, count: 10 },
+        { step_number: 1, count: 65 },
+        { step_number: 2, count: 30 },
+        { step_number: 3, count: 10 },
       ],
       pendingPerStep: [
-        { current_step: 0, count: 85 },
-        { current_step: 1, count: 35 },
-        { current_step: 2, count: 20 },
+        { current_step: 1, count: 85 },
+        { current_step: 2, count: 35 },
+        { current_step: 3, count: 20 },
       ],
       todaySent: 12,
     })
@@ -153,6 +153,15 @@ describe('Stats API', () => {
     expect(data.by_status.bounced).toBe(3)
     expect(data.by_status.interested).toBe(3)
     expect(data.steps).toHaveLength(3)
+    expect(data.steps[0].step_number).toBe(1)
+    expect(data.steps[0].sent).toBe(65)
+    expect(data.steps[0].pending).toBe(85)
+    expect(data.steps[1].step_number).toBe(2)
+    expect(data.steps[1].sent).toBe(30)
+    expect(data.steps[1].pending).toBe(35)
+    expect(data.steps[2].step_number).toBe(3)
+    expect(data.steps[2].sent).toBe(10)
+    expect(data.steps[2].pending).toBe(20)
     expect(data.today_sent).toBe(12)
     expect(data.daily_limit).toBe(50)
   })
