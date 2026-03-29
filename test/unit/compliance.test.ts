@@ -71,7 +71,7 @@ describe('Compliance Footer', () => {
 
   test('handles missing physical address', () => {
     const footer = generateComplianceFooter('', 'https://unsub.example.com')
-    expect(footer).toContain('Physical address not provided')
+    expect(footer).toContain('Physical address not configured')
     expect(footer).toContain('https://unsub.example.com')
   })
 })

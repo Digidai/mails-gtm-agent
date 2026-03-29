@@ -38,6 +38,14 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
+/**
+ * Authenticate API requests via ADMIN_TOKEN.
+ *
+ * SECURITY NOTE: This is a single-tenant auth model. One ADMIN_TOKEN grants
+ * full access to ALL campaigns. This is acceptable for single-user/single-org
+ * deployments (one Worker instance per customer). For multi-tenant use, this
+ * must be replaced with per-campaign or per-user auth (e.g., JWT with campaign_id claims).
+ */
 function checkAuth(request: Request, env: Env): boolean {
   const auth = request.headers.get('Authorization')
   if (!auth || !auth.startsWith('Bearer ')) return false

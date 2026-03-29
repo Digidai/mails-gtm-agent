@@ -26,7 +26,11 @@ const VALID_INTENTS: IntentType[] = [
 export async function classifyReply(env: Env, replyText: string): Promise<ClassifyResult> {
   try {
     // Truncate reply to prevent token abuse; 2000 chars is more than enough for intent classification
-    const truncated = replyText.slice(0, 2000)
+    let truncated = replyText.slice(0, 2000)
+    // Strip control characters except newline/tab
+    truncated = truncated.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    // Strip HTML/script tags
+    truncated = truncated.replace(/<[^>]*>/g, '')
     const userPrompt = `The reply:\n${truncated}`
     const raw = await callLLM(env, SYSTEM_PROMPT, userPrompt)
 

@@ -75,13 +75,15 @@ export async function handleWebhookEvent(
     return jsonResponse({ error: 'Invalid JSON body' }, 400)
   }
 
-  // 3.5. Replay attack protection: reject events with stale timestamps (> 5 minutes)
-  if (payload.timestamp) {
-    const now = Math.floor(Date.now() / 1000)
-    const age = Math.abs(now - payload.timestamp)
-    if (age > 300) { // 5 minutes
-      return jsonResponse({ error: 'Webhook timestamp too old or too far in the future (max 5 minutes skew)' }, 401)
-    }
+  // 3.5. Replay attack protection: timestamp is required and must be within 5 minutes
+  if (!payload.timestamp || typeof payload.timestamp !== 'number') {
+    return jsonResponse({ error: 'Missing or invalid timestamp field (required, Unix seconds)' }, 400)
+  }
+
+  const now = Math.floor(Date.now() / 1000)
+  const age = Math.abs(now - payload.timestamp)
+  if (age > 300) { // 5 minutes
+    return jsonResponse({ error: 'Webhook timestamp too old or too far in the future (max 5 minutes skew)' }, 401)
   }
 
   if (!payload.email || !payload.event) {

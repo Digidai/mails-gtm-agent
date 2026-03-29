@@ -50,7 +50,7 @@ export async function notifyOwner(
   }
 
   try {
-    await fetch(`${env.MAILS_API_URL}/api/send`, {
+    const res = await fetch(`${env.MAILS_API_URL}/api/send`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${env.MAILS_API_KEY}`,
@@ -63,6 +63,9 @@ export async function notifyOwner(
         text: body,
       }),
     })
+    if (!res.ok) {
+      console.error(`Notification send failed: ${res.status} ${await res.text().catch(() => '')}`)
+    }
   } catch (err) {
     // Notification failure is not critical — log and continue
     console.error('Failed to send notification:', err)

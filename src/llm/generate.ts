@@ -3,12 +3,24 @@ import { callLLM } from './openrouter'
 
 /**
  * Sanitize user-provided data before embedding in LLM prompt.
- * Truncates to maxLen and strips control characters.
+ * Truncates to maxLen, strips control characters, removes HTML tags,
+ * and neutralises common prompt injection patterns.
  */
 function sanitizeForPrompt(value: string | null | undefined, maxLen = 200): string {
   if (!value) return ''
   let s = value.slice(0, maxLen)
+  // Strip control characters except newline/tab
   s = s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+  // Strip HTML/script tags
+  s = s.replace(/<[^>]*>/g, '')
+  // Neutralise common prompt injection patterns (case-insensitive)
+  s = s.replace(/ignore\s+(all\s+)?previous\s+instructions/gi, '[FILTERED]')
+  s = s.replace(/forget\s+(all\s+)?previous\s+(instructions|context)/gi, '[FILTERED]')
+  s = s.replace(/you\s+are\s+now\s+/gi, '[FILTERED]')
+  s = s.replace(/system\s*:\s*/gi, '[FILTERED]')
+  s = s.replace(/\bdo\s+not\s+follow\b/gi, '[FILTERED]')
+  s = s.replace(/\bnew\s+instructions?\s*:/gi, '[FILTERED]')
+  s = s.replace(/\boverride\b/gi, '[FILTERED]')
   return s
 }
 
@@ -90,9 +102,9 @@ export async function generateEmail(
     }
   }
 
-  // Last resort default
+  // Last resort default (sanitize contact.name to prevent injection in email body)
   return {
     subject: `Introduction - ${campaign.product_name}`,
-    body: `Hi ${contact.name || 'there'},\n\nI wanted to introduce ${campaign.product_name}. ${campaign.product_description}\n\nWould you be open to a quick chat?\n\nBest regards`,
+    body: `Hi ${sanitizeForPrompt(contact.name, 100) || 'there'},\n\nI wanted to introduce ${campaign.product_name}. ${campaign.product_description}\n\nWould you be open to a quick chat?\n\nBest regards`,
   }
 }

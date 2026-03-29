@@ -107,13 +107,24 @@ function getStopReason(contact: CampaignContact, events: Event[], campaign: Camp
 
 /**
  * Sanitize user-provided data before embedding in LLM prompt.
- * Truncates to maxLen, strips control characters, and removes prompt injection patterns.
+ * Truncates to maxLen, strips control characters, removes HTML tags,
+ * and neutralises common prompt injection patterns.
  */
 function sanitizeForPrompt(value: string | null | undefined, maxLen = 200): string {
   if (!value) return ''
   let s = value.slice(0, maxLen)
   // Strip control characters except newline/tab
   s = s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+  // Strip HTML/script tags
+  s = s.replace(/<[^>]*>/g, '')
+  // Neutralise common prompt injection patterns (case-insensitive)
+  s = s.replace(/ignore\s+(all\s+)?previous\s+instructions/gi, '[FILTERED]')
+  s = s.replace(/forget\s+(all\s+)?previous\s+(instructions|context)/gi, '[FILTERED]')
+  s = s.replace(/you\s+are\s+now\s+/gi, '[FILTERED]')
+  s = s.replace(/system\s*:\s*/gi, '[FILTERED]')
+  s = s.replace(/\bdo\s+not\s+follow\b/gi, '[FILTERED]')
+  s = s.replace(/\bnew\s+instructions?\s*:/gi, '[FILTERED]')
+  s = s.replace(/\boverride\b/gi, '[FILTERED]')
   return s
 }
 
@@ -129,6 +140,7 @@ function buildSystemPrompt(
   const contactName = sanitizeForPrompt(contact.name, 100) || 'Unknown'
   const contactCompany = sanitizeForPrompt(contact.company, 100) || 'Unknown'
   const contactRole = sanitizeForPrompt(contact.role, 100) || 'Unknown'
+  const contactEmail = sanitizeForPrompt(contact.email, 254)
 
   // Build event timeline
   let timeline: string
@@ -139,7 +151,8 @@ function buildSystemPrompt(
       .map(e => {
         let data = ''
         try {
-          data = e.event_data && e.event_data !== '{}' ? ` | ${e.event_data}` : ''
+          // Sanitize event_data which may contain user-supplied content (e.g. reply snippets)
+          data = e.event_data && e.event_data !== '{}' ? ` | ${sanitizeForPrompt(e.event_data, 300)}` : ''
         } catch { /* ignore */ }
         return `- ${e.created_at} | ${e.event_type}${data}`
       })
@@ -172,7 +185,7 @@ ${kbJson}
 - Name: ${contactName}
 - Company: ${contactCompany}
 - Role: ${contactRole}
-- Email: ${contact.email}
+- Email: ${contactEmail}
 
 ## Interaction Timeline (chronological, last 20 events)
 ${timeline}

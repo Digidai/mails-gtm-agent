@@ -25,6 +25,32 @@ export async function generateKnowledgeBase(
   productUrl: string,
   env: Env,
 ): Promise<KnowledgeBase> {
+  // Validate URL scheme to prevent SSRF via file://, gopher://, etc.
+  try {
+    const parsed = new URL(productUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('product_url must use http or https protocol')
+    }
+    // Block private/internal IPs to mitigate SSRF
+    const hostname = parsed.hostname.toLowerCase()
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname.startsWith('10.') ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('172.') ||
+      hostname === '[::1]' ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local')
+    ) {
+      throw new Error('product_url must not point to private/internal addresses')
+    }
+  } catch (e) {
+    if ((e as Error).message.includes('product_url')) throw e
+    throw new Error(`Invalid product_url: ${productUrl}`)
+  }
+
   // 1. Fetch markdown via md.genedai.me (with 15s timeout)
   const mdController = new AbortController()
   const mdTimeout = setTimeout(() => mdController.abort(), 15_000)

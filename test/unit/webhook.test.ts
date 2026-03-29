@@ -98,6 +98,7 @@ describe('Webhook Event Handler', () => {
     const body = JSON.stringify({
       email: 'alice@acme.com',
       event: 'signup',
+      timestamp: Math.floor(Date.now() / 1000),
       data: { plan: 'pro' },
     })
 
@@ -135,6 +136,7 @@ describe('Webhook Event Handler', () => {
     const body = JSON.stringify({
       email: 'alice@acme.com',
       event: 'signup',
+      timestamp: Math.floor(Date.now() / 1000),
     })
 
     const request = new Request('https://test.com/webhook/event/campaign-1', {
@@ -163,6 +165,7 @@ describe('Webhook Event Handler', () => {
     const body = JSON.stringify({
       email: 'alice@acme.com',
       event: 'signup',
+      timestamp: Math.floor(Date.now() / 1000),
     })
 
     const request = new Request('https://test.com/webhook/event/campaign-1', {
@@ -208,6 +211,7 @@ describe('Webhook Event Handler', () => {
     const body = JSON.stringify({
       email: 'alice@acme.com',
       event: 'invalid_event',
+      timestamp: Math.floor(Date.now() / 1000),
     })
 
     const signature = await sign(body, SECRET)
@@ -239,6 +243,7 @@ describe('Webhook Event Handler', () => {
     const body = JSON.stringify({
       email: 'unknown@acme.com',
       event: 'signup',
+      timestamp: Math.floor(Date.now() / 1000),
     })
 
     const signature = await sign(body, SECRET)
@@ -256,5 +261,71 @@ describe('Webhook Event Handler', () => {
     const response = await handleWebhookEvent(request, 'campaign-1', env)
 
     expect(response.status).toBe(404)
+  })
+
+  test('rejects webhook without timestamp (replay protection)', async () => {
+    const mock = createMockDB({
+      campaign: {
+        id: 'campaign-1',
+        webhook_secret: SECRET,
+      } as Campaign,
+      contact: { id: 'contact-1', status: 'active' },
+    })
+
+    const body = JSON.stringify({
+      email: 'alice@acme.com',
+      event: 'signup',
+      // no timestamp
+    })
+
+    const signature = await sign(body, SECRET)
+
+    const request = new Request('https://test.com/webhook/event/campaign-1', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': signature,
+      },
+      body,
+    })
+
+    const env = { DB: mock.db } as any
+    const response = await handleWebhookEvent(request, 'campaign-1', env)
+
+    expect(response.status).toBe(400)
+    const data = await response.json() as any
+    expect(data.error).toContain('timestamp')
+  })
+
+  test('rejects webhook with stale timestamp', async () => {
+    const mock = createMockDB({
+      campaign: {
+        id: 'campaign-1',
+        webhook_secret: SECRET,
+      } as Campaign,
+      contact: { id: 'contact-1', status: 'active' },
+    })
+
+    const body = JSON.stringify({
+      email: 'alice@acme.com',
+      event: 'signup',
+      timestamp: Math.floor(Date.now() / 1000) - 600, // 10 minutes ago
+    })
+
+    const signature = await sign(body, SECRET)
+
+    const request = new Request('https://test.com/webhook/event/campaign-1', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': signature,
+      },
+      body,
+    })
+
+    const env = { DB: mock.db } as any
+    const response = await handleWebhookEvent(request, 'campaign-1', env)
+
+    expect(response.status).toBe(401)
   })
 })
