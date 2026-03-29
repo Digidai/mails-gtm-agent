@@ -1,5 +1,5 @@
 import { Env, ClassifyResult, IntentType } from '../types'
-import { callLLM } from './openrouter'
+import { callLLM, extractJson } from './openrouter'
 
 const SYSTEM_PROMPT = `Classify the intent of this email reply. Return ONLY valid JSON:
 { "intent": "interested|not_now|not_interested|wrong_person|out_of_office|unsubscribe|auto_reply|do_not_contact|unclear", "confidence": 0.0-1.0, "resume_date": "YYYY-MM-DD or null" }
@@ -35,9 +35,9 @@ export async function classifyReply(env: Env, replyText: string): Promise<Classi
     const raw = await callLLM(env, SYSTEM_PROMPT, userPrompt)
 
     // Extract JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
+    const jsonStr = extractJson(raw)
+    if (jsonStr) {
+      const parsed = JSON.parse(jsonStr)
       if (parsed.intent && VALID_INTENTS.includes(parsed.intent)) {
         return {
           intent: parsed.intent,

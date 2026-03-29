@@ -28,74 +28,50 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     return json({ error: 'Missing email' }, 400)
   }
 
-  // 1. Get all contact IDs for this email (needed for cascading deletes)
-  const contactIds = await env.DB.prepare(
-    'SELECT id FROM campaign_contacts WHERE email = ?'
-  ).bind(email).all<{ id: string }>()
+  // Use D1 batch for atomic deletion — all statements succeed or fail together.
+  // Order matters: delete child records before parent (campaign_contacts).
+  const suppressionId = crypto.randomUUID().replace(/-/g, '')
 
-  const ids = (contactIds.results || []).map(r => r.id)
-
-  // 2. Delete from send_log
-  const sendLogResult = await env.DB.prepare(
-    'DELETE FROM send_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
-  ).bind(email).run()
-
-  // 3. Delete from events (v2)
-  let eventsDeleted = 0
-  if (ids.length > 0) {
-    const eventsResult = await env.DB.prepare(
+  const results = await env.DB.batch([
+    // 1. Delete from send_log (child of campaign_contacts)
+    env.DB.prepare(
+      'DELETE FROM send_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email),
+    // 2. Delete from events
+    env.DB.prepare(
       'DELETE FROM events WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
-    ).bind(email).run()
-    eventsDeleted = eventsResult.meta?.changes || 0
-  }
-
-  // 4. Delete from decision_log (v2)
-  let decisionsDeleted = 0
-  if (ids.length > 0) {
-    const decisionsResult = await env.DB.prepare(
+    ).bind(email),
+    // 3. Delete from decision_log
+    env.DB.prepare(
       'DELETE FROM decision_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
-    ).bind(email).run()
-    decisionsDeleted = decisionsResult.meta?.changes || 0
-  }
-
-  // 5. Delete from tracked_links (v2)
-  let linksDeleted = 0
-  if (ids.length > 0) {
-    const linksResult = await env.DB.prepare(
+    ).bind(email),
+    // 4. Delete from tracked_links
+    env.DB.prepare(
       'DELETE FROM tracked_links WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
-    ).bind(email).run()
-    linksDeleted = linksResult.meta?.changes || 0
-  }
-
-  // 6. Delete from campaign_contacts
-  const contactsResult = await env.DB.prepare(
-    'DELETE FROM campaign_contacts WHERE email = ?'
-  ).bind(email).run()
-
-  // 7. Delete from unsubscribes
-  const unsubResult = await env.DB.prepare(
-    'DELETE FROM unsubscribes WHERE email = ?'
-  ).bind(email).run()
-
-  // 8. Add to unsubscribes as a global block (use __global__ for consistent suppression)
-  await env.DB.prepare(`
-    INSERT INTO unsubscribes (id, email, campaign_id, reason)
-    VALUES (?, ?, '__global__', 'GDPR deletion request')
-    ON CONFLICT(email, campaign_id) DO NOTHING
-  `).bind(
-    crypto.randomUUID().replace(/-/g, ''),
-    email,
-  ).run()
+    ).bind(email),
+    // 5. Delete from campaign_contacts (parent)
+    env.DB.prepare(
+      'DELETE FROM campaign_contacts WHERE email = ?'
+    ).bind(email),
+    // 6. Delete from unsubscribes
+    env.DB.prepare(
+      'DELETE FROM unsubscribes WHERE email = ?'
+    ).bind(email),
+    // 7. Add global suppression record
+    env.DB.prepare(
+      "INSERT INTO unsubscribes (id, email, campaign_id, reason) VALUES (?, ?, '__global__', 'GDPR deletion request') ON CONFLICT(email, campaign_id) DO NOTHING"
+    ).bind(suppressionId, email),
+  ])
 
   return json({
     email,
     deleted: {
-      contacts: contactsResult.meta?.changes || 0,
-      send_logs: sendLogResult.meta?.changes || 0,
-      events: eventsDeleted,
-      decisions: decisionsDeleted,
-      tracked_links: linksDeleted,
-      unsubscribes: unsubResult.meta?.changes || 0,
+      send_logs: results[0].meta?.changes || 0,
+      events: results[1].meta?.changes || 0,
+      decisions: results[2].meta?.changes || 0,
+      tracked_links: results[3].meta?.changes || 0,
+      contacts: results[4].meta?.changes || 0,
+      unsubscribes: results[5].meta?.changes || 0,
     },
     note: 'Email has been added to global suppression list',
   })

@@ -28,12 +28,16 @@ function jsonResponse(data: unknown, status = 200): Response {
   })
 }
 
-/** Constant-time string comparison to prevent timing attacks on auth tokens */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
+/** Constant-time string comparison to prevent timing attacks on auth tokens.
+ *  Hashes both inputs first so the comparison always runs in fixed time,
+ *  regardless of whether the input lengths differ. */
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const hashA = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(a)))
+  const hashB = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(b)))
   let diff = 0
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  for (let i = 0; i < hashA.length; i++) {
+    diff |= hashA[i] ^ hashB[i]
   }
   return diff === 0
 }
@@ -46,7 +50,7 @@ function timingSafeEqual(a: string, b: string): boolean {
  * deployments (one Worker instance per customer). For multi-tenant use, this
  * must be replaced with per-campaign or per-user auth (e.g., JWT with campaign_id claims).
  */
-function checkAuth(request: Request, env: Env): boolean {
+async function checkAuth(request: Request, env: Env): Promise<boolean> {
   const auth = request.headers.get('Authorization')
   if (!auth || !auth.startsWith('Bearer ')) return false
   const token = auth.slice(7) // "Bearer ".length === 7
@@ -106,7 +110,7 @@ export default {
     // ===== AUTHENTICATED API ENDPOINTS =====
 
     if (path.startsWith('/api/')) {
-      if (!checkAuth(request, env)) {
+      if (!(await checkAuth(request, env))) {
         return jsonResponse({ error: 'Unauthorized' }, 401)
       }
 
