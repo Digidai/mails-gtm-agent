@@ -31,7 +31,7 @@ async function _replyCron(env: Env): Promise<void> {
 
   // Fetch inbound emails once for all campaigns
   const sinceParam = since ? `&since=${encodeURIComponent(since)}` : ''
-  const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&limit=100${sinceParam}`, {
+  const res = await fetch(`${apiUrl}/v1/inbox?direction=inbound&limit=100`, {
     headers: {
       'Authorization': `Bearer ${env.MAILS_API_KEY}`,
     },
