@@ -126,15 +126,16 @@ describe('Stats API', () => {
         { status: 'not_interested', count: 1 },
         { status: 'queued', count: 5 },
       ],
+      // R2-7: DB stores 0-based step indices; stats API converts to 1-based for output
       sentPerStep: [
-        { step_number: 1, count: 65 },
-        { step_number: 2, count: 30 },
-        { step_number: 3, count: 10 },
+        { step_number: 0, count: 65 },
+        { step_number: 1, count: 30 },
+        { step_number: 2, count: 10 },
       ],
       pendingPerStep: [
-        { current_step: 1, count: 85 },
-        { current_step: 2, count: 35 },
-        { current_step: 3, count: 20 },
+        { current_step: 0, count: 85 },
+        { current_step: 1, count: 35 },
+        { current_step: 2, count: 20 },
       ],
       todaySent: 12,
     })

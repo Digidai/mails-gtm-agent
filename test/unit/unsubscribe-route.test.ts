@@ -82,6 +82,33 @@ describe('Unsubscribe Route', () => {
     expect(html).toContain('expired or invalid')
   })
 
+  test('POST returns 500 when DB write fails', async () => {
+    const token = await generateUnsubscribeToken('alice@example.com', 'camp-1', SECRET)
+    // Create a mock env where DB.prepare().bind().run() throws
+    const env = {
+      UNSUBSCRIBE_SECRET: SECRET,
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._args: any[]) => ({
+            run: async () => { throw new Error('DB connection lost') },
+          }),
+        }),
+      },
+    } as any
+
+    const request = new Request(`https://test.com/unsubscribe?token=${token}`, {
+      method: 'POST',
+    })
+
+    const response = await handleUnsubscribeRoute(request, env)
+    const html = await response.text()
+
+    expect(response.status).toBe(500)
+    expect(html).toContain('Error')
+    expect(html).toContain('Something went wrong')
+    expect(html).not.toContain('successfully')
+  })
+
   test('masks email in confirmation page', async () => {
     const token = await generateUnsubscribeToken('alice@example.com', 'camp-1', SECRET)
     const { env } = createMockEnv()

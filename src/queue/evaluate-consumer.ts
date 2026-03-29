@@ -34,12 +34,25 @@ export async function evaluateConsumer(
 
 /**
  * Check if today's global send count has reached the DAILY_SEND_LIMIT.
+ * R2-6: Read from the atomic '__global__' counter row maintained by send-consumer.
+ * Falls back to SUM of per-campaign rows if the global row doesn't exist yet.
  */
 async function isGlobalSendLimitReached(env: Env): Promise<boolean> {
   const limit = parseInt(env.DAILY_SEND_LIMIT || '100', 10)
   const today = new Date().toISOString().slice(0, 10)
+
+  // Prefer the atomic global counter
+  const globalRow = await env.DB.prepare(
+    "SELECT sent_count as total FROM daily_stats WHERE campaign_id = '__global__' AND date = ?",
+  ).bind(today).first<{ total: number }>()
+
+  if (globalRow) {
+    return globalRow.total >= limit
+  }
+
+  // Fallback: sum per-campaign rows (before first send of the day creates the global row)
   const row = await env.DB.prepare(
-    "SELECT COALESCE(SUM(sent_count), 0) as total FROM daily_stats WHERE date = ?",
+    "SELECT COALESCE(SUM(sent_count), 0) as total FROM daily_stats WHERE date = ? AND campaign_id != '__global__'",
   ).bind(today).first<{ total: number }>()
 
   const totalSent = row?.total ?? 0

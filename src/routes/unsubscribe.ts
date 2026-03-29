@@ -64,6 +64,13 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
     `).bind(payload.email).run()
   } catch (err) {
     console.error('Unsubscribe error:', err)
+    return new Response(
+      unsubscribeHtml('Error', 'Something went wrong while processing your unsubscribe request. Please try again later.', false),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      },
+    )
   }
 
   return new Response(

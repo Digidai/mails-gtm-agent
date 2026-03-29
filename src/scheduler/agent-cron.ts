@@ -47,7 +47,7 @@ export async function agentCron(env: Env): Promise<void> {
         WHERE campaign_id = ?
           AND status IN ('pending', 'active')
           AND (next_check_at IS NULL OR next_check_at <= ?)
-          AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, '-5 minutes'))
+          AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, '-15 minutes'))
         ORDER BY next_check_at ASC, created_at ASC
         LIMIT 50
       `).bind(campaign.id, now, now).all<{ id: string; campaign_id: string }>()
@@ -58,7 +58,7 @@ export async function agentCron(env: Env): Promise<void> {
       for (const contact of contacts.results) {
         // Atomic update: mark as enqueued to prevent duplicates
         const updateResult = await env.DB.prepare(
-          'UPDATE campaign_contacts SET last_enqueued_at = ? WHERE id = ? AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, \'-5 minutes\'))',
+          'UPDATE campaign_contacts SET last_enqueued_at = ? WHERE id = ? AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, \'-15 minutes\'))',
         ).bind(now, contact.id, now).run()
 
         if (!updateResult.meta?.changes) continue // Already enqueued recently

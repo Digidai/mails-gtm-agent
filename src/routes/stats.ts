@@ -48,11 +48,15 @@ async function getCampaignStats(campaignId: string, env: Env): Promise<Response>
   }
 
   // 4. Get per-step stats
+  // R2-7: step_number convention:
+  //   - Internal (send_log.step_number, campaign_contacts.current_step): 0-based array index
+  //   - API output (stats response, steps config): 1-based for user readability
+  //   We look up DB data using 0-based index `i`, but return 1-based step_number in output.
   const steps: CampaignStep[] = JSON.parse(campaign.steps || '[]')
   const stepStats: Array<{ step_number: number; sent: number; pending: number }> = []
 
   if (steps.length > 0) {
-    // Count sent per step from send_log
+    // Count sent per step from send_log (step_number is 0-based in DB)
     const sentPerStep = await env.DB.prepare(`
       SELECT step_number, COUNT(*) as count
       FROM send_log
@@ -65,7 +69,7 @@ async function getCampaignStats(campaignId: string, env: Env): Promise<Response>
       sentMap[row.step_number] = row.count
     }
 
-    // Count pending per step from campaign_contacts
+    // Count pending per step from campaign_contacts (current_step is 0-based in DB)
     const pendingPerStep = await env.DB.prepare(`
       SELECT current_step, COUNT(*) as count
       FROM campaign_contacts
@@ -79,11 +83,13 @@ async function getCampaignStats(campaignId: string, env: Env): Promise<Response>
     }
 
     for (let i = 0; i < steps.length; i++) {
-      const stepNum = typeof (steps[i] as any).step_number === 'number' ? (steps[i] as any).step_number : i + 1
+      // Display as 1-based step_number for API consumers
+      const displayStepNum = i + 1
+      // Look up DB data using 0-based index (matches send_log.step_number and current_step)
       stepStats.push({
-        step_number: stepNum,
-        sent: sentMap[stepNum] || 0,
-        pending: pendingMap[stepNum] || 0,
+        step_number: displayStepNum,
+        sent: sentMap[i] || 0,
+        pending: pendingMap[i] || 0,
       })
     }
   }
