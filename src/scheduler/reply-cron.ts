@@ -3,29 +3,25 @@ import { classifyReply } from '../llm/classify'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 
+/**
+ * Reply cron — runs globally once (not per-campaign).
+ * Fetches all inbound emails since the last check, then matches each
+ * reply to the correct campaign_contact(s) by from_address.
+ */
 export async function replyCron(env: Env): Promise<void> {
-  // Get active campaigns
-  const campaigns = await env.DB.prepare(
-    "SELECT * FROM campaigns WHERE status = 'active'"
-  ).all<Campaign>()
+  // Use a global KV-style marker stored in an arbitrary active campaign,
+  // or fall back to the most recent last_inbox_check_at across all campaigns.
+  const sinceRow = await env.DB.prepare(
+    "SELECT MAX(last_inbox_check_at) as last_check FROM campaigns WHERE status = 'active'"
+  ).first<{ last_check: string | null }>()
 
-  if (!campaigns.results?.length) return
+  const since = sinceRow?.last_check || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  for (const campaign of campaigns.results) {
-    try {
-      await processReplies(env, campaign)
-    } catch (err) {
-      console.error(`Reply cron error for campaign ${campaign.id}:`, err)
-    }
-  }
-}
-
-async function processReplies(env: Env, campaign: Campaign): Promise<void> {
-  const since = campaign.last_inbox_check_at || campaign.created_at
   const apiUrl = env.MAILS_API_URL
 
-  // Fetch inbound emails
-  const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&limit=100`, {
+  // Fetch inbound emails once for all campaigns
+  const sinceParam = since ? `&since=${encodeURIComponent(since)}` : ''
+  const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&limit=100${sinceParam}`, {
     headers: {
       'Authorization': `Bearer ${env.MAILS_API_KEY}`,
     },
@@ -45,9 +41,10 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
   })
 
   if (!messages.length) {
+    // Update all active campaigns' last_inbox_check_at
     await env.DB.prepare(
-      "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE id = ?"
-    ).bind(campaign.id).run()
+      "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE status = 'active'"
+    ).run()
     return
   }
 
@@ -55,36 +52,51 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
     const fromEmail = extractEmail(msg.from || msg.from_address || '')
     if (!fromEmail) continue
 
-    // Find matching contact — support both v1 and v2 statuses
-    const contact = await env.DB.prepare(`
-      SELECT * FROM campaign_contacts
-      WHERE campaign_id = ? AND email = ? AND status IN ('sent', 'replied', 'active', 'interested', 'pending')
-    `).bind(campaign.id, fromEmail.toLowerCase()).first<CampaignContact>()
+    // Find ALL matching contacts across ALL active campaigns
+    const contacts = await env.DB.prepare(`
+      SELECT cc.*, c.engine, c.id as _campaign_id, c.name as _campaign_name
+      FROM campaign_contacts cc
+      JOIN campaigns c ON c.id = cc.campaign_id
+      WHERE cc.email = ? AND c.status = 'active'
+        AND cc.status IN ('sent', 'replied', 'active', 'interested', 'pending')
+    `).bind(fromEmail.toLowerCase()).all<CampaignContact & { engine: string; _campaign_id: string; _campaign_name: string }>()
 
-    if (!contact) continue
+    if (!contacts.results?.length) continue
 
-    // Classify the reply
+    // Classify the reply once (shared across campaigns)
     const replyText = msg.text || msg.body || msg.snippet || ''
     const classification = await classifyReply(env, replyText)
-
     const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
 
-    // Record reply event (v2)
-    await recordEvent(env, campaign.id, contact.id, 'reply', {
-      intent: effectiveIntent,
-      confidence: classification.confidence,
-      resume_date: classification.resume_date,
-      snippet: replyText.slice(0, 200),
-    })
+    // Process for each matching contact
+    for (const contact of contacts.results) {
+      try {
+        const campaign = {
+          id: contact._campaign_id,
+          name: contact._campaign_name,
+          engine: contact.engine,
+        } as Campaign
 
-    // Execute action based on intent
-    await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText)
+        // Record reply event
+        await recordEvent(env, campaign.id, contact.id, 'reply', {
+          intent: effectiveIntent,
+          confidence: classification.confidence,
+          resume_date: classification.resume_date,
+          snippet: replyText.slice(0, 200),
+        })
+
+        // Execute action based on intent
+        await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText)
+      } catch (err) {
+        console.error(`Reply processing error for contact ${contact.id}:`, err)
+      }
+    }
   }
 
-  // Update last check time
+  // Update all active campaigns' last_inbox_check_at
   await env.DB.prepare(
-    "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE id = ?"
-  ).bind(campaign.id).run()
+    "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE status = 'active'"
+  ).run()
 }
 
 async function handleIntent(
@@ -166,6 +178,8 @@ async function handleIntent(
         SET status = ${isAgentEngine ? "'unsubscribed'" : "'do_not_contact'"}, reply_intent = ?, reply_confidence = ?, updated_at = ?
         WHERE id = ?
       `).bind(intent, confidence, now, contact.id).run()
+
+      // Campaign-specific unsubscribe record
       await env.DB.prepare(`
         INSERT INTO unsubscribes (id, email, campaign_id, reason)
         VALUES (?, ?, ?, ?)
@@ -176,6 +190,24 @@ async function handleIntent(
         campaign.id,
         `Reply classified as: ${intent}`,
       ).run()
+
+      // Global unsubscribe record — blocks all campaigns
+      await env.DB.prepare(`
+        INSERT INTO unsubscribes (id, email, campaign_id, reason)
+        VALUES (?, ?, '__global__', ?)
+        ON CONFLICT(email, campaign_id) DO NOTHING
+      `).bind(
+        crypto.randomUUID().replace(/-/g, ''),
+        contact.email,
+        `Reply classified as: ${intent}`,
+      ).run()
+
+      // Mark as unsubscribed across ALL campaigns
+      await env.DB.prepare(`
+        UPDATE campaign_contacts
+        SET status = 'unsubscribed', updated_at = ?
+        WHERE email = ? AND status NOT IN ('unsubscribed', 'do_not_contact')
+      `).bind(now, contact.email).run()
       break
 
     case 'out_of_office':

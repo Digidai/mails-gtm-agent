@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS unsubscribes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_unsubscribes_email ON unsubscribes(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unsubscribes_global ON unsubscribes(email) WHERE campaign_id = '__global__';
 
 CREATE TABLE IF NOT EXISTS send_log (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -126,6 +127,7 @@ CREATE TABLE IF NOT EXISTS tracked_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracked_links_campaign ON tracked_links(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_tracked_links_contact ON tracked_links(contact_id);
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,

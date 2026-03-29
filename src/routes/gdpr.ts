@@ -77,10 +77,10 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     'DELETE FROM unsubscribes WHERE email = ?'
   ).bind(email).run()
 
-  // 8. Add to unsubscribes as a global block
+  // 8. Add to unsubscribes as a global block (use __global__ for consistent suppression)
   await env.DB.prepare(`
     INSERT INTO unsubscribes (id, email, campaign_id, reason)
-    VALUES (?, ?, '__gdpr__', 'GDPR deletion request')
+    VALUES (?, ?, '__global__', 'GDPR deletion request')
     ON CONFLICT(email, campaign_id) DO NOTHING
   `).bind(
     crypto.randomUUID().replace(/-/g, ''),

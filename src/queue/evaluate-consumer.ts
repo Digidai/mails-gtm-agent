@@ -10,6 +10,7 @@ import {
 import { makeDecision } from '../agent/decide'
 import { replaceLinksWithTracking } from '../tracking/links'
 import { recordEvent } from '../events/record'
+import { TERMINAL_STATUSES } from './send-consumer'
 
 /**
  * Evaluate-consumer: processes evaluate-queue messages.
@@ -29,6 +30,20 @@ export async function evaluateConsumer(
       msg.retry()
     }
   }
+}
+
+/**
+ * Check if today's global send count has reached the DAILY_SEND_LIMIT.
+ */
+async function isGlobalSendLimitReached(env: Env): Promise<boolean> {
+  const limit = parseInt(env.DAILY_SEND_LIMIT || '100', 10)
+  const today = new Date().toISOString().slice(0, 10)
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(SUM(sent_count), 0) as total FROM daily_stats WHERE date = ?",
+  ).bind(today).first<{ total: number }>()
+
+  const totalSent = row?.total ?? 0
+  return totalSent >= limit
 }
 
 async function processEvaluateMessage(
@@ -58,8 +73,7 @@ async function processEvaluateMessage(
   if (!contact) return
 
   // Skip terminal statuses
-  const terminalStatuses = ['converted', 'stopped', 'unsubscribed', 'bounced', 'do_not_contact']
-  if (terminalStatuses.includes(contact.status)) return
+  if (TERMINAL_STATUSES.includes(contact.status as typeof TERMINAL_STATUSES[number])) return
 
   // 4. Fetch recent events (last 20, chronological) for this campaign
   const eventsResult = await env.DB.prepare(
@@ -111,10 +125,63 @@ async function processEvaluateMessage(
     now,
   ).run()
 
-  // 9. Act on decision
+  // 9. Re-check contact status to avoid race with reply-cron
+  //    (reply-cron may have changed status to unsubscribed/interested/stopped while we were deciding)
+  const freshContact = await env.DB.prepare(
+    'SELECT status FROM campaign_contacts WHERE id = ?',
+  ).bind(contact_id).first<{ status: string }>()
+
+  if (freshContact) {
+    if (TERMINAL_STATUSES.includes(freshContact.status as typeof TERMINAL_STATUSES[number])) {
+      console.log(`Contact ${contact_id} status changed to '${freshContact.status}' during evaluation, aborting action`)
+      return
+    }
+  }
+
+  // 10. Act on decision
   switch (decision.action) {
     case 'send': {
       if (!decision.email) break
+
+      // 10a. Check global daily send limit before sending
+      if (await isGlobalSendLimitReached(env)) {
+        console.log(`Global daily send limit reached, deferring send for contact ${contact_id}`)
+        // Treat as wait — re-evaluate tomorrow
+        const nextCheck = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        await env.DB.prepare(
+          "UPDATE campaign_contacts SET status = 'active', next_check_at = ?, updated_at = datetime('now') WHERE id = ?",
+        ).bind(nextCheck, contact_id).run()
+        break
+      }
+
+      // Content safety: reject emails containing HTML (should be plain text) or suspicious patterns
+      const emailText = `${decision.email.subject} ${decision.email.body}`
+      if (/<script|<iframe|<object|<embed/i.test(emailText)) {
+        console.error(`Content safety: LLM generated HTML/script content for contact ${contact_id}, blocking send`)
+        await recordEvent(env, campaign_id, contact_id, 'content_blocked', {
+          reason: 'HTML/script content detected in LLM output',
+          subject: decision.email.subject,
+        })
+        break
+      }
+
+      // Validate that the LLM didn't embed a different email address in the subject/body as a redirect target
+      // (defense against prompt injection trying to exfiltrate data)
+      const emailAddressPattern = /[\w.-]+@[\w.-]+\.\w+/g
+      const foundEmails = emailText.match(emailAddressPattern) || []
+      const allowedEmails = new Set([
+        contact.email.toLowerCase(),
+        (campaign.from_email || '').toLowerCase(),
+      ].filter(Boolean))
+      const suspiciousEmails = foundEmails.filter(e => !allowedEmails.has(e.toLowerCase()))
+      if (suspiciousEmails.length > 0) {
+        console.warn(`Content check: LLM output contains unexpected email addresses: ${suspiciousEmails.join(', ')} (contact: ${contact_id})`)
+        // Log but don't block -- could be legitimate mentions of team members, etc.
+        await recordEvent(env, campaign_id, contact_id, 'content_warning', {
+          reason: 'Unexpected email addresses in LLM output',
+          found: suspiciousEmails,
+        })
+      }
 
       let emailBody = decision.email.body
 
@@ -132,6 +199,14 @@ async function processEvaluateMessage(
         emailBody = trackedBody
       }
 
+      // Fix 7: Update contact status FIRST, then enqueue.
+      // If DB update fails, we don't enqueue (preventing duplicate evaluation).
+      // If enqueue fails after DB update, the contact is in 'active' status with
+      // a stale next_check_at, so the next cron cycle will re-enqueue it.
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET status = 'active', next_check_at = NULL, updated_at = datetime('now') WHERE id = ?",
+      ).bind(contact_id).run()
+
       // Enqueue to send queue
       const sendMessage: AgentSendMessage = {
         type: 'agent_send',
@@ -146,11 +221,6 @@ async function processEvaluateMessage(
       }
 
       await env.SEND_QUEUE.send(sendMessage)
-
-      // Update contact status
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'active', updated_at = datetime('now') WHERE id = ?",
-      ).bind(contact_id).run()
       break
     }
 

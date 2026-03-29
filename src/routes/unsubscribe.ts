@@ -21,8 +21,9 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
     })
   }
 
-  // Record unsubscribe
+  // Record unsubscribe — campaign-specific + global
   try {
+    // Campaign-specific record
     await env.DB.prepare(`
       INSERT INTO unsubscribes (id, email, campaign_id)
       VALUES (?, ?, ?)
@@ -33,11 +34,21 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
       payload.campaign_id,
     ).run()
 
-    // Update contact status
+    // Global record — ensures no other campaign can email this contact
+    await env.DB.prepare(`
+      INSERT INTO unsubscribes (id, email, campaign_id, reason)
+      VALUES (?, ?, '__global__', 'Unsubscribed via link')
+      ON CONFLICT(email, campaign_id) DO NOTHING
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      payload.email,
+    ).run()
+
+    // Update contact status across ALL campaigns for this email
     await env.DB.prepare(`
       UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now')
-      WHERE campaign_id = ? AND email = ?
-    `).bind(payload.campaign_id, payload.email).run()
+      WHERE email = ?
+    `).bind(payload.email).run()
   } catch (err) {
     console.error('Unsubscribe error:', err)
   }

@@ -1,4 +1,5 @@
 import { Campaign, CampaignContact, Event } from '../types'
+import { TERMINAL_STATUSES } from '../queue/send-consumer'
 
 export type HardRuleResult = 'send' | 'wait' | 'stop' | 'evaluate'
 
@@ -12,8 +13,7 @@ export function checkHardRules(
   campaign: Campaign,
 ): HardRuleResult {
   // Terminal statuses — never evaluate
-  const terminalStatuses = ['converted', 'stopped', 'unsubscribed', 'bounced', 'do_not_contact']
-  if (terminalStatuses.includes(contact.status)) {
+  if (TERMINAL_STATUSES.includes(contact.status as typeof TERMINAL_STATUSES[number])) {
     return 'stop'
   }
 
@@ -43,23 +43,23 @@ export function checkHardRules(
 }
 
 /**
- * Count consecutive email_sent events with no intervening link_click or reply events.
+ * Count consecutive email_sent events with no intervening engagement events.
  * Looks at the most recent events.
+ * Any engagement (link_click, reply, signup, payment) resets the streak.
  */
 function countNoResponseStreak(events: Event[]): number {
   let streak = 0
   // Events are ordered oldest first, so iterate from newest
+  const engagementTypes = ['link_click', 'reply', 'signup', 'payment']
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
     if (e.event_type === 'email_sent') {
       streak++
-    } else if (e.event_type === 'link_click' || e.event_type === 'reply') {
+    } else if (engagementTypes.includes(e.event_type)) {
       break
     }
-    // Other event types (signup, payment) also break the streak
-    if (e.event_type === 'signup' || e.event_type === 'payment') {
-      break
-    }
+    // Other event types (e.g. bounce, custom) are ignored — they neither
+    // increase the streak nor break it.
   }
   return streak
 }

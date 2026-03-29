@@ -4,6 +4,11 @@ import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/
 import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
 import { recordEvent } from '../events/record'
 
+/** Terminal statuses shared by both v1 and v2 engines */
+export const TERMINAL_STATUSES = [
+  'unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped', 'not_interested',
+] as const
+
 export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void> {
   for (const msg of batch.messages) {
     try {
@@ -11,12 +16,11 @@ export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void>
 
       if (body.type === 'agent_send') {
         // v2 agent send
-        await processAgentSend(body as AgentSendMessage, env)
+        await processAgentSend(body as AgentSendMessage, env, msg)
       } else {
         // v1 sequence send
-        await processSequenceSend(body as SendMessage, env)
+        await processSequenceSend(body as SendMessage, env, msg)
       }
-      msg.ack()
     } catch (err) {
       console.error('Send consumer error:', err)
       msg.retry()
@@ -29,7 +33,7 @@ export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void>
  * The email content is already prepared by evaluate-consumer.
  * We just add compliance headers/footer and send.
  */
-async function processAgentSend(message: AgentSendMessage, env: Env): Promise<void> {
+async function processAgentSend(message: AgentSendMessage, env: Env, msg: Message): Promise<void> {
   const { campaign_id, contact_id, mailbox, to, subject, body, angle, decision_id } = message
 
   // Fetch campaign for compliance fields
@@ -39,6 +43,14 @@ async function processAgentSend(message: AgentSendMessage, env: Env): Promise<vo
 
   if (!campaign) {
     console.error(`Campaign ${campaign_id} not found`)
+    msg.ack()
+    return
+  }
+
+  // CAN-SPAM: refuse to send without physical address (defense-in-depth, primary check is at campaign start)
+  if (!campaign.physical_address?.trim()) {
+    console.error(`Campaign ${campaign_id}: refusing to send without physical address (CAN-SPAM)`)
+    msg.ack()
     return
   }
 
@@ -47,11 +59,14 @@ async function processAgentSend(message: AgentSendMessage, env: Env): Promise<vo
     'SELECT * FROM campaign_contacts WHERE id = ?',
   ).bind(contact_id).first<CampaignContact>()
 
-  if (!contact) return
+  if (!contact) {
+    msg.ack()
+    return
+  }
 
-  const terminalStatuses = ['unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped']
-  if (terminalStatuses.includes(contact.status)) {
+  if (TERMINAL_STATUSES.includes(contact.status as typeof TERMINAL_STATUSES[number])) {
     console.log(`Contact ${contact_id} is in terminal status '${contact.status}', skipping send`)
+    msg.ack()
     return
   }
 
@@ -64,6 +79,7 @@ async function processAgentSend(message: AgentSendMessage, env: Env): Promise<vo
     await env.DB.prepare(
       "UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now') WHERE id = ?",
     ).bind(contact_id).run()
+    msg.ack()
     return
   }
 
@@ -96,6 +112,7 @@ async function processAgentSend(message: AgentSendMessage, env: Env): Promise<vo
     await recordEvent(env, campaign_id, contact_id, 'email_sent', {
       subject, angle, decision_id, dry_run: true,
     })
+    msg.ack()
     return
   }
 
@@ -135,57 +152,74 @@ async function processAgentSend(message: AgentSendMessage, env: Env): Promise<vo
       await env.DB.prepare(
         "UPDATE campaign_contacts SET status = 'bounced', updated_at = datetime('now') WHERE id = ?",
       ).bind(contact_id).run()
+
+      // Record bounce event so the agent sees it in the timeline
+      await recordEvent(env, campaign_id, contact_id, 'bounce', {
+        error: errText.slice(0, 500), status_code: sendRes.status,
+      })
+      msg.ack()
       return
     }
 
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
 
+  // === Email sent successfully — from here, always ack (no retry). ===
+  // If DB writes fail below, we log the error but do NOT retry the message
+  // because the email has already been delivered and retrying would duplicate it.
+
   const sendData = await sendRes.json() as any
   const messageId = sendData.id || sendData.provider_id || sendData.message_id || ''
 
-  // Update contact
-  const now = new Date().toISOString()
-  await env.DB.prepare(
-    "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, sent_message_id = ?, updated_at = ? WHERE id = ?",
-  ).bind(now, messageId, now, contact_id).run()
+  try {
+    // Update contact
+    const now = new Date().toISOString()
+    await env.DB.prepare(
+      "UPDATE campaign_contacts SET emails_sent = emails_sent + 1, last_sent_at = ?, sent_message_id = ?, updated_at = ? WHERE id = ?",
+    ).bind(now, messageId, now, contact_id).run()
 
-  // Log send
-  await env.DB.prepare(`
-    INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
-    VALUES (?, ?, ?, 0, ?, ?, ?, 'sent')
-  `).bind(
-    crypto.randomUUID().replace(/-/g, ''),
-    campaign_id,
-    contact_id,
-    subject,
-    fullBody,
-    messageId,
-  ).run()
+    // Log send
+    await env.DB.prepare(`
+      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
+      VALUES (?, ?, ?, 0, ?, ?, ?, 'sent')
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      campaign_id,
+      contact_id,
+      subject,
+      fullBody,
+      messageId,
+    ).run()
 
-  // Record event
-  await recordEvent(env, campaign_id, contact_id, 'email_sent', {
-    subject, angle, decision_id, message_id: messageId,
-  })
+    // Record event
+    await recordEvent(env, campaign_id, contact_id, 'email_sent', {
+      subject, angle, decision_id, message_id: messageId,
+    })
 
-  // Update daily stats
-  const today = now.slice(0, 10)
-  await env.DB.prepare(`
-    INSERT INTO daily_stats (id, campaign_id, date, sent_count)
-    VALUES (?, ?, ?, 1)
-    ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
-  `).bind(
-    crypto.randomUUID().replace(/-/g, ''),
-    campaign_id,
-    today,
-  ).run()
+    // Update daily stats
+    const today = now.slice(0, 10)
+    await env.DB.prepare(`
+      INSERT INTO daily_stats (id, campaign_id, date, sent_count)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      campaign_id,
+      today,
+    ).run()
+  } catch (dbErr) {
+    // Email was already sent — log the DB failure but do NOT retry
+    console.error(`[CRITICAL] Email sent to ${to} (msgId=${messageId}) but post-send DB update failed:`, dbErr)
+  }
+
+  msg.ack()
 }
 
 /**
  * v1: Fixed-sequence email send.
  * Preserved for engine='sequence' campaigns.
  */
-async function processSequenceSend(message: SendMessage, env: Env): Promise<void> {
+async function processSequenceSend(message: SendMessage, env: Env, msg: Message): Promise<void> {
   const { contact_id, campaign_id, step_number } = message
 
   const contact = await env.DB.prepare(
@@ -194,17 +228,19 @@ async function processSequenceSend(message: SendMessage, env: Env): Promise<void
 
   if (!contact) {
     console.error(`Contact ${contact_id} not found`)
+    msg.ack()
     return
   }
 
-  const terminalStatuses = ['unsubscribed', 'bounced', 'do_not_contact', 'not_interested']
-  if (terminalStatuses.includes(contact.status)) {
+  if (TERMINAL_STATUSES.includes(contact.status as typeof TERMINAL_STATUSES[number])) {
     console.log(`Contact ${contact_id} is in terminal status '${contact.status}', skipping`)
+    msg.ack()
     return
   }
 
   if (contact.status === 'sent' && contact.current_step >= step_number && contact.sent_message_id) {
     console.log(`Contact ${contact_id} already sent for step ${step_number}, skipping`)
+    msg.ack()
     return
   }
 
@@ -214,6 +250,7 @@ async function processSequenceSend(message: SendMessage, env: Env): Promise<void
 
   if (!campaign) {
     console.error(`Campaign ${campaign_id} not found`)
+    msg.ack()
     return
   }
 
@@ -225,6 +262,7 @@ async function processSequenceSend(message: SendMessage, env: Env): Promise<void
     await env.DB.prepare(
       "UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now') WHERE id = ?",
     ).bind(contact_id).run()
+    msg.ack()
     return
   }
 
@@ -271,6 +309,7 @@ async function processSequenceSend(message: SendMessage, env: Env): Promise<void
         "UPDATE campaign_contacts SET status = 'bounced', updated_at = datetime('now') WHERE id = ?",
       ).bind(contact_id).run()
       console.error(`Non-retryable send error (${sendRes.status}) for contact ${contact_id}, marking as bounced`)
+      msg.ack()
       return
     }
 
@@ -281,54 +320,62 @@ async function processSequenceSend(message: SendMessage, env: Env): Promise<void
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
 
+  // === Email sent successfully — from here, always ack (no retry). ===
   const sendData = await sendRes.json() as any
   const messageId = sendData.id || sendData.provider_id || sendData.message_id || ''
 
-  const steps: CampaignStep[] = JSON.parse(campaign.steps || '[]')
-  const nextStep = step_number + 1
-  let nextSendAt: string | null = null
+  try {
+    const steps: CampaignStep[] = JSON.parse(campaign.steps || '[]')
+    const nextStep = step_number + 1
+    let nextSendAt: string | null = null
 
-  if (nextStep < steps.length) {
-    const delayDays = steps[nextStep].delay_days || 3
-    const nextDate = new Date(Date.now() + delayDays * 24 * 60 * 60 * 1000)
-    nextSendAt = nextDate.toISOString()
+    if (nextStep < steps.length) {
+      const delayDays = steps[nextStep].delay_days || 3
+      const nextDate = new Date(Date.now() + delayDays * 24 * 60 * 60 * 1000)
+      nextSendAt = nextDate.toISOString()
+    }
+
+    const newStatus = nextStep < steps.length ? 'pending' : 'sent'
+    await env.DB.prepare(`
+      UPDATE campaign_contacts
+      SET status = ?, current_step = ?, next_send_at = ?, last_sent_at = datetime('now'),
+          sent_message_id = ?, emails_sent = emails_sent + 1, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(
+      newStatus,
+      nextStep < steps.length ? nextStep : step_number,
+      nextSendAt,
+      messageId,
+      contact_id,
+    ).run()
+
+    await env.DB.prepare(`
+      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      campaign_id,
+      contact_id,
+      step_number,
+      subject,
+      fullBody,
+      messageId,
+    ).run()
+
+    const today = new Date().toISOString().slice(0, 10)
+    await env.DB.prepare(`
+      INSERT INTO daily_stats (id, campaign_id, date, sent_count)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      campaign_id,
+      today,
+    ).run()
+  } catch (dbErr) {
+    // Email was already sent — log the DB failure but do NOT retry
+    console.error(`[CRITICAL] Email sent to ${contact.email} (msgId=${messageId}) but post-send DB update failed:`, dbErr)
   }
 
-  const newStatus = nextStep < steps.length ? 'pending' : 'sent'
-  await env.DB.prepare(`
-    UPDATE campaign_contacts
-    SET status = ?, current_step = ?, next_send_at = ?, last_sent_at = datetime('now'),
-        sent_message_id = ?, emails_sent = emails_sent + 1, updated_at = datetime('now')
-    WHERE id = ?
-  `).bind(
-    newStatus,
-    nextStep < steps.length ? nextStep : step_number,
-    nextSendAt,
-    messageId,
-    contact_id,
-  ).run()
-
-  await env.DB.prepare(`
-    INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')
-  `).bind(
-    crypto.randomUUID().replace(/-/g, ''),
-    campaign_id,
-    contact_id,
-    step_number,
-    subject,
-    fullBody,
-    messageId,
-  ).run()
-
-  const today = new Date().toISOString().slice(0, 10)
-  await env.DB.prepare(`
-    INSERT INTO daily_stats (id, campaign_id, date, sent_count)
-    VALUES (?, ?, ?, 1)
-    ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
-  `).bind(
-    crypto.randomUUID().replace(/-/g, ''),
-    campaign_id,
-    today,
-  ).run()
+  msg.ack()
 }
