@@ -207,6 +207,8 @@ ${timeline}
 7. Keep emails concise (max 5 sentences), professional, and value-driven
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
+10. End every email with exactly "Best,\n[sender name or team name]" — do NOT add footer, unsubscribe link, or physical address (those are added automatically)
+11. Do NOT include "[Your name]" placeholder — use the product name as sender
 
 ## Decision
 Return ONLY valid JSON:
