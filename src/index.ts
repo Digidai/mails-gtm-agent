@@ -62,8 +62,8 @@ function setDefaults(env: Env, url?: URL): void {
   env.MAILS_MAILBOX = env.MAILS_MAILBOX || ''
   env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
   env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
-  if (url) {
-    env.UNSUBSCRIBE_BASE_URL = env.UNSUBSCRIBE_BASE_URL || url.origin
+  if (!env.UNSUBSCRIBE_BASE_URL) {
+    env.UNSUBSCRIBE_BASE_URL = url?.origin || 'https://mails-gtm-agent.genedai.workers.dev'
   }
 }
 
