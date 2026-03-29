@@ -91,6 +91,29 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  // Validate conversion_url and product_url are safe http(s) URLs
+  if (body.conversion_url) {
+    try {
+      const parsed = new URL(body.conversion_url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return json({ error: 'conversion_url must use http or https protocol' }, 400)
+      }
+    } catch {
+      return json({ error: 'conversion_url is not a valid URL' }, 400)
+    }
+  }
+
+  if (body.product_url) {
+    try {
+      const parsed = new URL(body.product_url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return json({ error: 'product_url must use http or https protocol' }, 400)
+      }
+    } catch {
+      return json({ error: 'product_url is not a valid URL' }, 400)
+    }
+  }
+
   const steps: CampaignStep[] = body.steps || [
     { delay_days: 0, subject_template: '', body_template: '' },
     { delay_days: 3, subject_template: '', body_template: '' },

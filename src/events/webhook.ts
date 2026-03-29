@@ -1,5 +1,6 @@
 import { Env, Campaign } from '../types'
 import { recordEvent } from './record'
+import { notifyOwner } from '../notify'
 
 /**
  * Verify HMAC-SHA256 webhook signature.
@@ -67,11 +68,20 @@ export async function handleWebhookEvent(
   }
 
   // 3. Parse event payload
-  let payload: { email: string; event: string; data?: Record<string, unknown> }
+  let payload: { email: string; event: string; timestamp?: number; data?: Record<string, unknown> }
   try {
     payload = JSON.parse(bodyText)
   } catch {
     return jsonResponse({ error: 'Invalid JSON body' }, 400)
+  }
+
+  // 3.5. Replay attack protection: reject events with stale timestamps (> 5 minutes)
+  if (payload.timestamp) {
+    const now = Math.floor(Date.now() / 1000)
+    const age = Math.abs(now - payload.timestamp)
+    if (age > 300) { // 5 minutes
+      return jsonResponse({ error: 'Webhook timestamp too old or too far in the future (max 5 minutes skew)' }, 401)
+    }
   }
 
   if (!payload.email || !payload.event) {
@@ -103,6 +113,16 @@ export async function handleWebhookEvent(
       SET status = 'converted', converted_at = ?, conversion_type = ?, updated_at = ?
       WHERE id = ? AND status NOT IN ('unsubscribed', 'bounced')
     `).bind(now, payload.event, now, contact.id).run()
+
+    // Notify campaign owner of conversion
+    try {
+      await notifyOwner(env, campaign, 'conversion', {
+        contactEmail: payload.email,
+        conversionType: payload.event,
+      })
+    } catch {
+      // Notification failure is non-critical
+    }
   }
 
   return jsonResponse({ event_id: eventId, status: 'recorded' })

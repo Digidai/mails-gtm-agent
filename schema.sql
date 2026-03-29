@@ -151,3 +151,4 @@ CREATE TABLE IF NOT EXISTS decision_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_decision_log_contact ON decision_log(contact_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_decision_log_campaign ON decision_log(campaign_id, created_at);

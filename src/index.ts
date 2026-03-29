@@ -47,7 +47,10 @@ function checkAuth(request: Request, env: Env): boolean {
 
 function setDefaults(env: Env, url?: URL): void {
   env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
-  env.UNSUBSCRIBE_SECRET = env.UNSUBSCRIBE_SECRET || env.ADMIN_TOKEN
+  if (!env.UNSUBSCRIBE_SECRET) {
+    console.warn('[SECURITY] UNSUBSCRIBE_SECRET not set, falling back to ADMIN_TOKEN. Set a separate secret in production.')
+    env.UNSUBSCRIBE_SECRET = env.ADMIN_TOKEN
+  }
   env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
   env.MAX_CSV_SIZE = env.MAX_CSV_SIZE || '5242880'
   if (url) {
@@ -160,10 +163,24 @@ export default {
 }
 
 /**
+ * Validate that a URL is safe to redirect to (prevent open redirect / protocol injection).
+ * Only allow http: and https: schemes.
+ */
+function isSafeRedirectUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Handle GET /t/:id — link tracking redirect
  * 1. Look up tracked link
- * 2. Record click event
- * 3. 302 redirect to original URL
+ * 2. Validate redirect URL safety
+ * 3. Record click event (deduplicated)
+ * 4. 302 redirect to original URL
  */
 async function handleTrackingRedirect(linkId: string, request: Request, env: Env): Promise<Response> {
   // Look up tracked link
@@ -180,18 +197,29 @@ async function handleTrackingRedirect(linkId: string, request: Request, env: Env
     return new Response('Not Found', { status: 404 })
   }
 
-  // Simple rate limiting: check IP + link_id
-  // (In production, use KV for rate limiting. For now, always record.)
-  try {
-    await recordEvent(env, link.campaign_id, link.contact_id, 'link_click', {
-      url: link.original_url,
-      tracking_id: linkId,
-    })
+  // Validate redirect URL to prevent open redirect / javascript: injection
+  if (!isSafeRedirectUrl(link.original_url)) {
+    console.error(`Blocked unsafe redirect URL: ${link.original_url} (tracking_id=${linkId})`)
+    return new Response('Bad Request: unsafe redirect URL', { status: 400 })
+  }
 
-    // Update contact last_click_at
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET last_click_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-    ).bind(link.contact_id).run()
+  // Deduplicate: only record the first click per tracked link
+  try {
+    const alreadyClicked = await env.DB.prepare(
+      "SELECT id FROM events WHERE contact_id = ? AND event_type = 'link_click' AND event_data LIKE ? LIMIT 1",
+    ).bind(link.contact_id, `%"tracking_id":"${linkId}"%`).first()
+
+    if (!alreadyClicked) {
+      await recordEvent(env, link.campaign_id, link.contact_id, 'link_click', {
+        url: link.original_url,
+        tracking_id: linkId,
+      })
+
+      // Update contact last_click_at
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET last_click_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+      ).bind(link.contact_id).run()
+    }
   } catch (err) {
     // Don't block redirect on event recording failure
     console.error('Failed to record click event:', err)

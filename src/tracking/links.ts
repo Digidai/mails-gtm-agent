@@ -14,6 +14,19 @@ const EXCLUDE_PATTERNS = [
 const URL_REGEX = /(https?:\/\/[^\s<>"]+)/g
 
 /**
+ * Validate that a URL is safe to track and redirect to.
+ * Only allow http: and https: schemes.
+ */
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Replace URLs in email body with tracking redirect links.
  * Returns the modified body and the list of tracked link IDs.
  */
@@ -38,6 +51,9 @@ export async function replaceLinksWithTracking(
 
     // Skip excluded patterns
     if (EXCLUDE_PATTERNS.some(p => p.test(url))) continue
+
+    // Skip non-http(s) URLs to prevent open redirect via tracked links
+    if (!isSafeUrl(url)) continue
 
     // Skip duplicates within the same email
     if (seenUrls.has(url)) continue

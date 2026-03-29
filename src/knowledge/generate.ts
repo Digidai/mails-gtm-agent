@@ -25,10 +25,18 @@ export async function generateKnowledgeBase(
   productUrl: string,
   env: Env,
 ): Promise<KnowledgeBase> {
-  // 1. Fetch markdown via md.genedai.me
-  const mdRes = await fetch(
-    `https://md.genedai.me/url?url=${encodeURIComponent(productUrl)}&clean=true`,
-  )
+  // 1. Fetch markdown via md.genedai.me (with 15s timeout)
+  const mdController = new AbortController()
+  const mdTimeout = setTimeout(() => mdController.abort(), 15_000)
+  let mdRes: Response
+  try {
+    mdRes = await fetch(
+      `https://md.genedai.me/url?url=${encodeURIComponent(productUrl)}&clean=true`,
+      { signal: mdController.signal },
+    )
+  } finally {
+    clearTimeout(mdTimeout)
+  }
 
   if (!mdRes.ok) {
     throw new Error(`Failed to fetch product page: ${mdRes.status}`)

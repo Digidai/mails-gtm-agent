@@ -61,10 +61,10 @@ async function processEvaluateMessage(
   const terminalStatuses = ['converted', 'stopped', 'unsubscribed', 'bounced', 'do_not_contact']
   if (terminalStatuses.includes(contact.status)) return
 
-  // 4. Fetch recent events (last 20, chronological)
+  // 4. Fetch recent events (last 20, chronological) for this campaign
   const eventsResult = await env.DB.prepare(
-    'SELECT * FROM events WHERE contact_id = ? ORDER BY created_at DESC LIMIT 20',
-  ).bind(contact_id).all<Event>()
+    'SELECT * FROM events WHERE campaign_id = ? AND contact_id = ? ORDER BY created_at DESC LIMIT 20',
+  ).bind(campaign_id, contact_id).all<Event>()
 
   const events = (eventsResult.results || []).reverse() // chronological order
 
@@ -88,10 +88,12 @@ async function processEvaluateMessage(
   // 6. Call Agent decision engine
   const decision = await makeDecision(env, campaign, contact, events, knowledgeBase)
 
-  // 7. Increment daily LLM calls
-  await env.DB.prepare(
-    'UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ?',
-  ).bind(campaign_id).run()
+  // 7. Increment daily LLM calls only when LLM was actually called
+  if (decision.llm_called) {
+    await env.DB.prepare(
+      'UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ?',
+    ).bind(campaign_id).run()
+  }
 
   // 8. Record decision log
   const decisionId = crypto.randomUUID().replace(/-/g, '')
@@ -114,15 +116,21 @@ async function processEvaluateMessage(
     case 'send': {
       if (!decision.email) break
 
-      // Replace links with tracking links
-      const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
-      const { body: trackedBody } = await replaceLinksWithTracking(
-        decision.email.body,
-        contact_id,
-        campaign_id,
-        baseUrl,
-        env,
-      )
+      let emailBody = decision.email.body
+
+      // Only create tracked links for non-dry-run campaigns.
+      // Dry-run tracked links would be reachable via /t/:id, leaking tracking URLs.
+      if (!campaign.dry_run) {
+        const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
+        const { body: trackedBody } = await replaceLinksWithTracking(
+          decision.email.body,
+          contact_id,
+          campaign_id,
+          baseUrl,
+          env,
+        )
+        emailBody = trackedBody
+      }
 
       // Enqueue to send queue
       const sendMessage: AgentSendMessage = {
@@ -132,7 +140,7 @@ async function processEvaluateMessage(
         mailbox: campaign.from_email || env.MAILS_MAILBOX,
         to: contact.email,
         subject: decision.email.subject,
-        body: trackedBody,
+        body: emailBody,
         angle: decision.email.angle,
         decision_id: decisionId,
       }
