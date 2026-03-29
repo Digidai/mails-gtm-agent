@@ -1,4 +1,5 @@
 import { Env, Campaign } from './types'
+import { mailsFetch } from './mails-api'
 
 type NotifyType = 'interested_reply' | 'conversion'
 
@@ -50,10 +51,9 @@ export async function notifyOwner(
   }
 
   try {
-    const res = await fetch(`${env.MAILS_API_URL}/api/send`, {
+    const res = await mailsFetch(env, '/v1/send', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${env.MAILS_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

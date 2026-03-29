@@ -27,5 +27,10 @@ queue = "mails-gtm-evaluate"
 max_batch_size = 1
 max_retries = 3
 
+# Service binding to mails-worker (avoids error 1042 on worker-to-worker calls)
+[[services]]
+binding = "MAILS_WORKER"
+service = "mails-worker"
+
 [triggers]
 crons = ["* * * * *"]

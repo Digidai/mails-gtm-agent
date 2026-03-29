@@ -2,6 +2,7 @@ import { Env, Campaign, CampaignContact, IntentType } from '../types'
 import { classifyReply } from '../llm/classify'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
+import { mailsFetch } from '../mails-api'
 
 /**
  * Reply cron — runs globally once (not per-campaign).
@@ -9,7 +10,7 @@ import { notifyOwner } from '../notify'
  * reply to the correct campaign_contact(s) by from_address.
  */
 export async function replyCron(env: Env): Promise<void> {
-  console.log('[reply-cron] Starting reply check...')
+  console.log(`[reply-cron] Starting reply check... binding=${!!env.MAILS_WORKER}`)
   try {
     await _replyCron(env)
     console.log('[reply-cron] Completed successfully')
@@ -27,18 +28,12 @@ async function _replyCron(env: Env): Promise<void> {
 
   const since = sinceRow?.last_check || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  const apiUrl = env.MAILS_API_URL
-
   // Fetch inbound emails once for all campaigns
-  const sinceParam = since ? `&since=${encodeURIComponent(since)}` : ''
-  const res = await fetch(`${apiUrl}/v1/inbox?direction=inbound&limit=100`, {
-    headers: {
-      'Authorization': `Bearer ${env.MAILS_API_KEY}`,
-    },
-  })
+  const res = await mailsFetch(env, '/v1/inbox?direction=inbound&limit=100')
 
   if (!res.ok) {
-    console.error(`Failed to fetch inbox: ${res.status}`)
+    const errBody = await res.text().catch(() => '')
+    console.error(`[reply-cron] Failed to fetch inbox: ${res.status} Body=${errBody.slice(0,200)}`)
     return
   }
 
@@ -77,9 +72,7 @@ async function _replyCron(env: Env): Promise<void> {
     let replyText = msg.text || msg.body_text || msg.body || msg.snippet || ''
     if (!replyText && msg.id) {
       try {
-        const emailRes = await fetch(`${apiUrl}/api/email?id=${msg.id}`, {
-          headers: { 'Authorization': `Bearer ${env.MAILS_API_KEY}` },
-        })
+        const emailRes = await mailsFetch(env, `/v1/email?id=${msg.id}`)
         if (emailRes.ok) {
           const emailData = await emailRes.json() as any
           replyText = emailData.body_text || emailData.body || ''

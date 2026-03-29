@@ -2,8 +2,9 @@ export interface Env {
   DB: D1Database
   SEND_QUEUE: Queue
   EVALUATE_QUEUE: Queue
+  MAILS_WORKER?: Fetcher      // Service binding to mails-worker (avoids error 1042)
   OPENROUTER_API_KEY: string
-  MAILS_API_URL: string       // default: https://mails-worker.genedai.workers.dev
+  MAILS_API_URL: string       // fallback: https://mails-worker.genedai.workers.dev
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email
   ADMIN_TOKEN: string         // API auth token
