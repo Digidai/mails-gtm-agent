@@ -1,14 +1,18 @@
 import { Env, Campaign, CampaignContact, SendMessage } from '../types'
 import { calculateDailyLimit } from '../utils/warmup'
 
+/**
+ * v1 send cron: only processes engine='sequence' campaigns.
+ * Preserved for backward compatibility.
+ */
 export async function sendCron(env: Env): Promise<void> {
   const globalLimit = parseInt(env.DAILY_SEND_LIMIT || '100', 10)
   const now = new Date().toISOString()
   const today = now.slice(0, 10) // YYYY-MM-DD
 
-  // 1. Get active campaigns
+  // 1. Get active SEQUENCE campaigns only
   const campaigns = await env.DB.prepare(
-    "SELECT * FROM campaigns WHERE status = 'active'"
+    "SELECT * FROM campaigns WHERE status = 'active' AND engine = 'sequence'"
   ).all<Campaign>()
 
   if (!campaigns.results?.length) return
@@ -61,14 +65,13 @@ export async function sendCron(env: Env): Promise<void> {
     for (const contact of pendingContacts.results) {
       if (globalRemaining <= 0) break
 
-      // Atomic update: only succeeds if still pending
       const updateResult = await env.DB.prepare(`
         UPDATE campaign_contacts
         SET status = 'queued', updated_at = datetime('now')
         WHERE id = ? AND status = 'pending'
       `).bind(contact.id).run()
 
-      if (!updateResult.meta?.changes) continue // Already picked up
+      if (!updateResult.meta?.changes) continue
 
       const message: SendMessage = {
         contact_id: contact.id,

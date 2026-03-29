@@ -28,25 +28,56 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     return json({ error: 'Missing email' }, 400)
   }
 
-  // 1. Delete from send_log using subquery (single query instead of N+1 loop)
+  // 1. Get all contact IDs for this email (needed for cascading deletes)
+  const contactIds = await env.DB.prepare(
+    'SELECT id FROM campaign_contacts WHERE email = ?'
+  ).bind(email).all<{ id: string }>()
+
+  const ids = (contactIds.results || []).map(r => r.id)
+
+  // 2. Delete from send_log
   const sendLogResult = await env.DB.prepare(
     'DELETE FROM send_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
   ).bind(email).run()
 
-  // 2. Delete from campaign_contacts
+  // 3. Delete from events (v2)
+  let eventsDeleted = 0
+  if (ids.length > 0) {
+    const eventsResult = await env.DB.prepare(
+      'DELETE FROM events WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email).run()
+    eventsDeleted = eventsResult.meta?.changes || 0
+  }
+
+  // 4. Delete from decision_log (v2)
+  let decisionsDeleted = 0
+  if (ids.length > 0) {
+    const decisionsResult = await env.DB.prepare(
+      'DELETE FROM decision_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email).run()
+    decisionsDeleted = decisionsResult.meta?.changes || 0
+  }
+
+  // 5. Delete from tracked_links (v2)
+  let linksDeleted = 0
+  if (ids.length > 0) {
+    const linksResult = await env.DB.prepare(
+      'DELETE FROM tracked_links WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email).run()
+    linksDeleted = linksResult.meta?.changes || 0
+  }
+
+  // 6. Delete from campaign_contacts
   const contactsResult = await env.DB.prepare(
     'DELETE FROM campaign_contacts WHERE email = ?'
   ).bind(email).run()
 
-  // 3. Delete from unsubscribes
+  // 7. Delete from unsubscribes
   const unsubResult = await env.DB.prepare(
     'DELETE FROM unsubscribes WHERE email = ?'
   ).bind(email).run()
 
-  // 4. Delete from daily_stats is not needed (aggregated, no PII)
-
-  // 5. Add to unsubscribes as a global block to prevent future sends
-  // Use campaign_id = '__gdpr__' because UNIQUE(email, campaign_id) with NULL won't conflict properly
+  // 8. Add to unsubscribes as a global block
   await env.DB.prepare(`
     INSERT INTO unsubscribes (id, email, campaign_id, reason)
     VALUES (?, ?, '__gdpr__', 'GDPR deletion request')
@@ -61,6 +92,9 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     deleted: {
       contacts: contactsResult.meta?.changes || 0,
       send_logs: sendLogResult.meta?.changes || 0,
+      events: eventsDeleted,
+      decisions: decisionsDeleted,
+      tracked_links: linksDeleted,
       unsubscribes: unsubResult.meta?.changes || 0,
     },
     note: 'Email has been added to global suppression list',

@@ -1,5 +1,7 @@
 import { Env, Campaign, CampaignContact, IntentType } from '../types'
 import { classifyReply } from '../llm/classify'
+import { recordEvent } from '../events/record'
+import { notifyOwner } from '../notify'
 
 export async function replyCron(env: Env): Promise<void> {
   // Get active campaigns
@@ -22,8 +24,7 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
   const since = campaign.last_inbox_check_at || campaign.created_at
   const apiUrl = env.MAILS_API_URL
 
-  // Fetch inbound emails (mails-worker inbox API does not support a 'since' filter,
-  // so we fetch recent emails and filter client-side by received_at)
+  // Fetch inbound emails
   const res = await fetch(`${apiUrl}/api/inbox?direction=inbound&limit=100`, {
     headers: {
       'Authorization': `Bearer ${env.MAILS_API_KEY}`,
@@ -38,14 +39,12 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
   const data = await res.json() as any
   const allMessages = data.messages || data.emails || []
 
-  // Client-side filter: only process emails received after last check
   const messages = allMessages.filter((msg: any) => {
     const receivedAt = msg.received_at || msg.created_at || ''
     return receivedAt > since
   })
 
   if (!messages.length) {
-    // Update last check time even if no messages
     await env.DB.prepare(
       "UPDATE campaigns SET last_inbox_check_at = datetime('now') WHERE id = ?"
     ).bind(campaign.id).run()
@@ -56,10 +55,10 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
     const fromEmail = extractEmail(msg.from || msg.from_address || '')
     if (!fromEmail) continue
 
-    // Find matching contact
+    // Find matching contact — support both v1 and v2 statuses
     const contact = await env.DB.prepare(`
       SELECT * FROM campaign_contacts
-      WHERE campaign_id = ? AND email = ? AND status IN ('sent', 'replied')
+      WHERE campaign_id = ? AND email = ? AND status IN ('sent', 'replied', 'active', 'interested', 'pending')
     `).bind(campaign.id, fromEmail.toLowerCase()).first<CampaignContact>()
 
     if (!contact) continue
@@ -68,11 +67,18 @@ async function processReplies(env: Env, campaign: Campaign): Promise<void> {
     const replyText = msg.text || msg.body || msg.snippet || ''
     const classification = await classifyReply(env, replyText)
 
-    // Override to unclear if confidence is below threshold
     const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
 
+    // Record reply event (v2)
+    await recordEvent(env, campaign.id, contact.id, 'reply', {
+      intent: effectiveIntent,
+      confidence: classification.confidence,
+      resume_date: classification.resume_date,
+      snippet: replyText.slice(0, 200),
+    })
+
     // Execute action based on intent
-    await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date)
+    await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText)
   }
 
   // Update last check time
@@ -88,20 +94,38 @@ async function handleIntent(
   intent: IntentType,
   confidence: number,
   resumeDate: string | null,
+  replyText: string,
 ): Promise<void> {
   const now = new Date().toISOString()
+  const isAgentEngine = campaign.engine === 'agent'
 
   switch (intent) {
     case 'interested':
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = 'interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      if (isAgentEngine) {
+        // v2: set status to interested, clear next_check_at so agent re-evaluates soon
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'interested', reply_intent = ?, reply_confidence = ?, next_check_at = NULL, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+
+        // Send notification
+        await notifyOwner(env, campaign, 'interested_reply', {
+          contactEmail: contact.email,
+          contactName: contact.name,
+          replyText,
+        })
+      } else {
+        // v1
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+      }
       break
 
     case 'not_now': {
-      // Default resume in 30 days if no date given
       const resume = resumeDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
       await env.DB.prepare(`
         UPDATE campaign_contacts
@@ -112,11 +136,19 @@ async function handleIntent(
     }
 
     case 'not_interested':
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = 'not_interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      if (isAgentEngine) {
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'stopped', reply_intent = ?, reply_confidence = ?, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+      } else {
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'not_interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+      }
       break
 
     case 'wrong_person':
@@ -131,10 +163,9 @@ async function handleIntent(
     case 'do_not_contact':
       await env.DB.prepare(`
         UPDATE campaign_contacts
-        SET status = 'do_not_contact', reply_intent = ?, reply_confidence = ?, updated_at = ?
+        SET status = ${isAgentEngine ? "'unsubscribed'" : "'do_not_contact'"}, reply_intent = ?, reply_confidence = ?, updated_at = ?
         WHERE id = ?
       `).bind(intent, confidence, now, contact.id).run()
-      // Also add to unsubscribes
       await env.DB.prepare(`
         INSERT INTO unsubscribes (id, email, campaign_id, reason)
         VALUES (?, ?, ?, ?)
@@ -149,7 +180,6 @@ async function handleIntent(
 
     case 'out_of_office':
     case 'auto_reply':
-      // Keep current status, just log the intent
       await env.DB.prepare(`
         UPDATE campaign_contacts
         SET reply_intent = ?, reply_confidence = ?, updated_at = ?
@@ -159,11 +189,20 @@ async function handleIntent(
 
     case 'unclear':
     default:
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = 'replied', reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      if (isAgentEngine) {
+        // v2: set to active so agent can decide
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'active', reply_intent = ?, reply_confidence = ?, next_check_at = NULL, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+      } else {
+        await env.DB.prepare(`
+          UPDATE campaign_contacts
+          SET status = 'replied', reply_intent = ?, reply_confidence = ?, updated_at = ?
+          WHERE id = ?
+        `).bind(intent, confidence, now, contact.id).run()
+      }
       break
   }
 }

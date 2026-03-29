@@ -78,6 +78,7 @@ function mockEnv(dbOverrides: Record<string, any> = {}): Env {
     MAX_CSV_SIZE: '5242880',
     DB: createMockDB(dbOverrides) as any,
     SEND_QUEUE: {} as any,
+    EVALUATE_QUEUE: {} as any,
   }
 }
 

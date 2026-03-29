@@ -1,4 +1,4 @@
--- mails-gtm-agent D1 Schema
+-- mails-gtm-agent D1 Schema (v2 — PLG Conversion Agent)
 
 CREATE TABLE IF NOT EXISTS campaigns (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -15,6 +15,21 @@ CREATE TABLE IF NOT EXISTS campaigns (
   warmup_started_at TEXT,
   steps TEXT NOT NULL DEFAULT '[]', -- JSON array of { delay_days, subject_template, body_template }
   last_inbox_check_at TEXT,
+
+  -- v2 fields
+  engine TEXT NOT NULL DEFAULT 'agent' CHECK (engine IN ('sequence', 'agent')),
+  product_url TEXT,
+  conversion_url TEXT,
+  knowledge_base TEXT DEFAULT '{}',
+  knowledge_base_status TEXT DEFAULT 'pending' CHECK (knowledge_base_status IN ('pending', 'manual', 'generating', 'ready', 'failed')),
+  max_emails INTEGER NOT NULL DEFAULT 6,
+  min_interval_days INTEGER NOT NULL DEFAULT 2,
+  webhook_secret TEXT,
+  dry_run INTEGER NOT NULL DEFAULT 0,
+  daily_llm_calls INTEGER NOT NULL DEFAULT 0,
+  daily_llm_limit INTEGER NOT NULL DEFAULT 100,
+  daily_llm_reset_at TEXT,
+
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -28,9 +43,12 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
   role TEXT,
   custom_fields TEXT DEFAULT '{}', -- JSON
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
-    'pending', 'queued', 'sent', 'replied',
-    'interested', 'not_now', 'not_interested',
-    'wrong_person', 'unsubscribed', 'bounced', 'do_not_contact'
+    'pending', 'active', 'interested', 'converted', 'stopped',
+    'unsubscribed', 'bounced',
+    -- v1 compat statuses
+    'queued', 'sent', 'replied',
+    'not_now', 'not_interested',
+    'wrong_person', 'do_not_contact'
   )),
   current_step INTEGER NOT NULL DEFAULT 0,
   next_send_at TEXT,
@@ -39,6 +57,15 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
   resume_at TEXT, -- for not_now contacts
   reply_intent TEXT,
   reply_confidence REAL,
+
+  -- v2 fields
+  emails_sent INTEGER NOT NULL DEFAULT 0,
+  last_click_at TEXT,
+  converted_at TEXT,
+  conversion_type TEXT, -- signup / payment / null
+  next_check_at TEXT,
+  last_enqueued_at TEXT, -- dedup guard
+
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(campaign_id, email)
@@ -47,6 +74,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_campaign_status ON campaign_contacts(campaign_id, status);
 CREATE INDEX IF NOT EXISTS idx_contacts_next_send ON campaign_contacts(status, next_send_at);
 CREATE INDEX IF NOT EXISTS idx_contacts_email ON campaign_contacts(email);
+CREATE INDEX IF NOT EXISTS idx_contacts_next_check ON campaign_contacts(campaign_id, next_check_at);
 
 CREATE TABLE IF NOT EXISTS unsubscribes (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -63,11 +91,11 @@ CREATE TABLE IF NOT EXISTS send_log (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   campaign_id TEXT NOT NULL,
   contact_id TEXT NOT NULL,
-  step_number INTEGER NOT NULL,
+  step_number INTEGER NOT NULL DEFAULT 0,
   subject TEXT,
   body TEXT,
   message_id TEXT,
-  status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'failed', 'bounced')),
+  status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent', 'failed', 'bounced', 'dry_run')),
   error TEXT,
   sent_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -86,3 +114,40 @@ CREATE TABLE IF NOT EXISTS daily_stats (
   unsubscribe_count INTEGER NOT NULL DEFAULT 0,
   UNIQUE(campaign_id, date)
 );
+
+-- v2 tables
+
+CREATE TABLE IF NOT EXISTS tracked_links (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  original_url TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracked_links_campaign ON tracked_links(campaign_id);
+
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  event_type TEXT NOT NULL, -- email_sent / link_click / reply / signup / payment
+  event_data TEXT DEFAULT '{}', -- JSON
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_contact ON events(contact_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_campaign ON events(campaign_id, event_type);
+
+CREATE TABLE IF NOT EXISTS decision_log (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  action TEXT NOT NULL, -- send / wait / stop
+  reasoning TEXT,
+  email_angle TEXT,
+  email_subject TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_log_contact ON decision_log(contact_id, created_at);

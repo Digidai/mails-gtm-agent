@@ -97,6 +97,7 @@ function mockEnv(dbConfig: Parameters<typeof createMockDB>[0] = {}): Env {
     MAX_CSV_SIZE: '5242880',
     DB: createMockDB(dbConfig) as any,
     SEND_QUEUE: {} as any,
+    EVALUATE_QUEUE: {} as any,
   }
 }
 

@@ -18,6 +18,7 @@ function mockEnv(): Env {
     MAX_CSV_SIZE: '5242880',
     DB: {} as any,
     SEND_QUEUE: {} as any,
+    EVALUATE_QUEUE: {} as any,
   }
 }
 

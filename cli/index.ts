@@ -1,22 +1,27 @@
 #!/usr/bin/env bun
 
-import { campaignCreate, campaignList, campaignStats, campaignStart, campaignPause } from './commands/campaign'
+import {
+  campaignCreate, campaignList, campaignStats, campaignStart, campaignPause,
+  campaignEvents, campaignDecisions,
+} from './commands/campaign'
 import { stepsSet, stepsList } from './commands/steps'
 import { contactsImport, contactsList } from './commands/contacts'
 import { previewCommand } from './commands/preview'
 import { configSet, configShow } from './commands/config-cmd'
 import { c } from './format'
 
-const USAGE = `${c.bold('mails-gtm')} - GTM outreach campaign CLI
+const USAGE = `${c.bold('mails-gtm')} - PLG Conversion Agent CLI (v2)
 
 ${c.bold('Campaign:')}
-  campaign create --name <n> --product <p> --description <d> [--address <a>]
+  campaign create --name <n> [--product-url <url>] [--conversion-url <url>] [--engine agent|sequence]
   campaign list
   campaign stats <campaign-id>
   campaign start <campaign-id>
   campaign pause <campaign-id>
+  campaign events <campaign-id> [--contact <id>]
+  campaign decisions <campaign-id> [--contact <id>]
 
-${c.bold('Steps:')}
+${c.bold('Steps (sequence engine):')}
   steps set <campaign-id> --file <steps.json>
   steps list <campaign-id>
 
@@ -53,6 +58,8 @@ async function main() {
           case 'stats': return await campaignStats(rest)
           case 'start': return await campaignStart(rest)
           case 'pause': return await campaignPause(rest)
+          case 'events': return await campaignEvents(rest)
+          case 'decisions': return await campaignDecisions(rest)
           default:
             console.error(c.red(`Unknown campaign command: ${action}`))
             process.exit(1)

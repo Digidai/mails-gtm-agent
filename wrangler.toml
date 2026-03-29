@@ -7,6 +7,7 @@ binding = "DB"
 database_name = "mails-gtm"
 database_id = "YOUR_D1_DATABASE_ID"
 
+# v1: send queue (shared by sequence + agent engines)
 [[queues.producers]]
 binding = "SEND_QUEUE"
 queue = "mails-gtm-send"
@@ -16,5 +17,15 @@ queue = "mails-gtm-send"
 max_batch_size = 1
 max_retries = 3
 
+# v2: evaluate queue (agent engine only)
+[[queues.producers]]
+binding = "EVALUATE_QUEUE"
+queue = "mails-gtm-evaluate"
+
+[[queues.consumers]]
+queue = "mails-gtm-evaluate"
+max_batch_size = 1
+max_retries = 3
+
 [triggers]
-crons = ["* * * * *", "*/5 * * * *"]
+crons = ["* * * * *", "*/10 * * * *", "*/5 * * * *"]

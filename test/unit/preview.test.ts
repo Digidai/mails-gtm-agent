@@ -54,6 +54,7 @@ function mockEnv(dbConfig: Parameters<typeof createMockDB>[0] = {}): Env {
     MAX_CSV_SIZE: '5242880',
     DB: createMockDB(dbConfig) as any,
     SEND_QUEUE: {} as any,
+    EVALUATE_QUEUE: {} as any,
   }
 }
 
@@ -74,6 +75,12 @@ function mockContact(overrides: Partial<CampaignContact> = {}): CampaignContact 
     resume_at: null,
     reply_intent: null,
     reply_confidence: null,
+    emails_sent: 0,
+    last_click_at: null,
+    converted_at: null,
+    conversion_type: null,
+    next_check_at: null,
+    last_enqueued_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
