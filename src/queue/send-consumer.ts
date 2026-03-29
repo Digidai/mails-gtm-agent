@@ -3,6 +3,7 @@ import { generateEmail } from '../llm/generate'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
 import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
 import { recordEvent } from '../events/record'
+import { mailsFetch } from '../mails-api'
 
 /** Terminal statuses shared by both v1 and v2 engines */
 export const TERMINAL_STATUSES = [
@@ -112,10 +113,9 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   }
 
   // Send via mails-agent API
-  const sendRes = await fetch(`${env.MAILS_API_URL}/api/send`, {
+  const sendRes = await mailsFetch(env, '/v1/send', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${env.MAILS_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -258,10 +258,9 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
-  const sendRes = await fetch(`${env.MAILS_API_URL}/api/send`, {
+  const sendRes = await mailsFetch(env, '/v1/send', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${env.MAILS_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
