@@ -1,7 +1,7 @@
 import { Env, Campaign } from './types'
 import { mailsFetch } from './mails-api'
 
-type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error'
+type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error' | 'knowledge_gap' | 'conversation_stopped'
 
 /**
  * Send a notification email to the campaign owner (campaign.from_email / mailbox).
@@ -16,6 +16,8 @@ export async function notifyOwner(
     replyText?: string
     conversionType?: string
     errorMessage?: string
+    gap?: string
+    reason?: string
   },
 ): Promise<void> {
   const to = campaign.from_email || env.MAILS_MAILBOX
@@ -58,6 +60,28 @@ export async function notifyOwner(
         `Error: ${data.errorMessage || 'Unknown error'}`,
         '',
         'Action: Check your API credentials and resume the campaign when ready.',
+      ].join('\n')
+      break
+
+    case 'knowledge_gap':
+      subject = `[mails-gtm] Knowledge gap: ${data.contactEmail}`
+      body = [
+        `${data.contactName || data.contactEmail} asked a question I couldn't answer.`,
+        '',
+        `Campaign: ${campaign.name}`,
+        `Missing info: ${data.gap || 'Unknown'}`,
+        '',
+        'Consider updating the campaign knowledge base.',
+      ].join('\n')
+      break
+
+    case 'conversation_stopped':
+      subject = `[mails-gtm] Conversation stopped: ${data.contactEmail}`
+      body = [
+        `Conversation with ${data.contactName || data.contactEmail} has been stopped.`,
+        '',
+        `Campaign: ${campaign.name}`,
+        `Reason: ${data.reason || 'Unknown'}`,
       ].join('\n')
       break
   }

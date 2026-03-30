@@ -30,6 +30,7 @@ function makeCampaign(overrides: Partial<Campaign> = {}): Campaign {
     daily_llm_calls: 0,
     daily_llm_limit: 100,
     daily_llm_reset_at: null,
+    max_auto_replies: 5,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
