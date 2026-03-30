@@ -61,13 +61,13 @@ export async function generateKnowledgeBase(
     throw new Error(`Invalid product_url: ${productUrl}`)
   }
 
-  // 1. Fetch markdown via Jina Reader (r.jina.ai) — reliable server-side rendering
+  // 1. Fetch markdown via md.genedai.me — URL appended to path, Accept: text/markdown
   const mdController = new AbortController()
   const mdTimeout = setTimeout(() => mdController.abort(), 20_000)
   let mdRes: Response
   try {
     mdRes = await fetch(
-      `https://r.jina.ai/${productUrl}`,
+      `https://md.genedai.me/${productUrl}`,
       {
         signal: mdController.signal,
         headers: { 'Accept': 'text/markdown' },
