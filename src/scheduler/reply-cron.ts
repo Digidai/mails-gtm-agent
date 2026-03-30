@@ -514,6 +514,13 @@ async function processAutoReply(
     return
   }
 
+  // For not_interested intent: send a polite final reply and stop immediately.
+  // No need to waste an LLM call on generateReply — the reply is discarded anyway.
+  if (intent === 'not_interested') {
+    await sendFinalMessage(env, campaign, contact, originalMsg)
+    return
+  }
+
   // Fix #1: Check LLM quota before generateReply
   if (!await claimLlmQuota(env, campaign.id)) {
     console.warn(`[reply-cron] LLM quota exhausted for campaign ${campaign.id}, skipping reply generation for ${contact.id}`)
@@ -542,12 +549,6 @@ async function processAutoReply(
       contactName: contact.name,
       reason: 'Contact requested to stop or talk to a human',
     })
-    return
-  }
-
-  // For not_interested intent: send a polite final reply and stop
-  if (intent === 'not_interested') {
-    await sendFinalMessage(env, campaign, contact, originalMsg)
     return
   }
 
@@ -682,7 +683,7 @@ async function sendAutoReply(
   // Fix #6: Replace links with tracking before adding compliance footer
   let trackedBody = replyBody
   if (!campaign.dry_run) {
-    const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
+    const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.genedai.workers.dev'
     const { body: replaced } = await replaceLinksWithTracking(
       replyBody,
       contact.id,
@@ -751,9 +752,12 @@ async function sendFinalMessage(
     null,
   )
 
-  // Mark contact as stopped
+  // Mark contact as stopped.
+  // NOTE: auto_reply_count is NOT incremented here because it was already
+  // atomically incremented in processAutoReply() before calling this function.
+  // Double-incrementing was a bug that inflated the counter.
   await env.DB.prepare(
-    "UPDATE campaign_contacts SET status = 'stopped', auto_reply_count = auto_reply_count + 1, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE campaign_contacts SET status = 'stopped', updated_at = datetime('now') WHERE id = ?"
   ).bind(contact.id).run()
 }
 

@@ -245,7 +245,7 @@ async function processEvaluateMessage(
       // Only create tracked links for non-dry-run campaigns.
       // Dry-run tracked links would be reachable via /t/:id, leaking tracking URLs.
       if (!campaign.dry_run) {
-        const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
+        const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.genedai.workers.dev'
         const { body: trackedBody } = await replaceLinksWithTracking(
           emailBody,
           contact_id,
