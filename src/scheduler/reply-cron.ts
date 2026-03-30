@@ -69,15 +69,27 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
-    // P1-3: Only match contacts that we actually sent to (last_sent_at IS NOT NULL),
-    // ordered by last_sent_at DESC so we attribute to the most recently contacted campaign first.
-    // Limit to 1 to avoid broadcasting replies across all campaigns.
+    // Dedup: skip if this exact email (by msg.id) was already processed
+    if (msg.id) {
+      const alreadyProcessed = await env.DB.prepare(
+        "SELECT id FROM events WHERE event_data LIKE ? LIMIT 1"
+      ).bind(`%"msg_id":"${msg.id}"%`).first()
+      if (alreadyProcessed) {
+        if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+          lastSuccessfulReceivedAt = msgReceivedAt
+        }
+        continue
+      }
+    }
+
+    // Only match contacts in non-terminal, non-already-classified states.
+    // Exclude: interested, stopped, converted, unsubscribed, bounced, do_not_contact, error
     const contacts = await env.DB.prepare(`
       SELECT cc.*, c.engine, c.id as _campaign_id, c.name as _campaign_name
       FROM campaign_contacts cc
       JOIN campaigns c ON c.id = cc.campaign_id
       WHERE cc.email = ? AND c.status = 'active'
-        AND cc.status IN ('sent', 'replied', 'active', 'interested', 'pending')
+        AND cc.status IN ('sent', 'replied', 'active')
         AND cc.last_sent_at IS NOT NULL
       ORDER BY cc.last_sent_at DESC
       LIMIT 1
@@ -129,8 +141,9 @@ async function _replyCron(env: Env): Promise<void> {
           engine: contact.engine,
         } as Campaign
 
-        // Record reply event
+        // Record reply event (include msg_id for dedup)
         await recordEvent(env, campaign.id, contact.id, 'reply', {
+          msg_id: msg.id || null,
           intent: effectiveIntent,
           confidence: classification.confidence,
           resume_date: classification.resume_date,
