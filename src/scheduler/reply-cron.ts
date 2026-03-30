@@ -7,7 +7,54 @@ import { mailsFetch } from '../mails-api'
 import { recordContactMessage, recordAgentMessage, getConversationHistory } from '../conversations/context'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
 import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
+import { replaceLinksWithTracking } from '../tracking/links'
 import { TERMINAL_STATUSES } from '../queue/send-consumer'
+
+/**
+ * Auto-responder header patterns — more reliable than LLM classification
+ * for detecting automated messages.
+ */
+const AUTO_RESPONDER_HEADERS: Record<string, (v: string) => boolean> = {
+  'auto-submitted': (v) => v.toLowerCase() !== 'no',
+  'precedence': (v) => ['bulk', 'junk', 'list', 'auto_reply'].includes(v.toLowerCase()),
+  'x-autoreply': () => true,
+  'x-autorespond': () => true,
+  'x-auto-response-suppress': () => true,
+}
+
+/**
+ * Check if an email is an auto-response based on headers.
+ * Returns true if any auto-responder header is detected.
+ */
+export function isAutoResponder(headers: Record<string, string> | undefined | null): boolean {
+  if (!headers) return false
+  for (const [headerName, check] of Object.entries(AUTO_RESPONDER_HEADERS)) {
+    const value = headers[headerName] || headers[headerName.toLowerCase()]
+    if (value && check(value)) return true
+  }
+  return false
+}
+
+/**
+ * Atomically claim an LLM quota slot for a campaign.
+ * Returns true if a slot was successfully claimed, false if the limit is reached.
+ * Resets the daily counter if daily_llm_reset_at is stale (before today).
+ */
+async function claimLlmQuota(env: Env, campaignId: string): Promise<boolean> {
+  const today = new Date().toISOString().slice(0, 10)
+
+  // First, try to reset if the reset date is stale (before today)
+  await env.DB.prepare(
+    "UPDATE campaigns SET daily_llm_calls = 0, daily_llm_reset_at = ? WHERE id = ? AND (daily_llm_reset_at IS NULL OR daily_llm_reset_at < ?)"
+  ).bind(today, campaignId, today).run()
+
+  // Atomically claim a slot
+  const result = await env.DB.prepare(
+    "UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ? AND daily_llm_calls < daily_llm_limit"
+  ).bind(campaignId).run()
+
+  return !!(result.meta?.changes)
+}
 
 /**
  * Reply cron — runs globally once (not per-campaign).
@@ -77,17 +124,27 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
-    // Dedup: skip if this exact email (by msg.id) was already processed
+    // Fix #2: Atomic dedup via INSERT OR IGNORE on processed_messages table.
+    // Only proceed if the insert succeeds (i.e., msg_id was not already processed).
     if (msg.id) {
-      const alreadyProcessed = await env.DB.prepare(
-        "SELECT id FROM events WHERE event_data LIKE ? LIMIT 1"
-      ).bind(`%"msg_id":"${msg.id}"%`).first()
-      if (alreadyProcessed) {
+      const insertResult = await env.DB.prepare(
+        "INSERT OR IGNORE INTO processed_messages (msg_id, created_at) VALUES (?, datetime('now'))"
+      ).bind(msg.id).run()
+      if (!insertResult.meta?.changes) {
+        // Already processed — skip
         if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
           lastSuccessfulReceivedAt = msgReceivedAt
         }
         continue
       }
+    }
+
+    // Fix #5: Self-reply protection — skip if the sender is our own mailbox
+    if (fromEmail.toLowerCase() === env.MAILS_MAILBOX?.toLowerCase()) {
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
+      continue
     }
 
     // Only match contacts in non-terminal, non-already-classified states.
@@ -129,6 +186,20 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
+    // Fix #5 (part 2): Check against all matched campaigns' from_email
+    const allFromEmails = new Set(contacts.results.map(c => c._from_email?.toLowerCase()).filter(Boolean))
+    if (allFromEmails.has(fromEmail.toLowerCase())) {
+      console.log(`[reply-cron] Skipping self-reply from ${fromEmail}`)
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
+      continue
+    }
+
+    // Fix #4: Check auto-responder headers before LLM classification
+    const msgHeaders = msg.headers || msg.header || null
+    let detectedAutoResponder = isAutoResponder(msgHeaders)
+
     // Fetch full email body (inbox list doesn't include body_text)
     let replyText = msg.text || msg.body_text || msg.body || msg.snippet || ''
     if (!replyText && msg.id) {
@@ -137,6 +208,10 @@ async function _replyCron(env: Env): Promise<void> {
         if (emailRes.ok) {
           const emailData = await emailRes.json() as any
           replyText = emailData.body_text || emailData.body || ''
+          // Also check headers from the detailed email fetch if not already detected
+          if (!detectedAutoResponder && isAutoResponder(emailData.headers)) {
+            detectedAutoResponder = true
+          }
         }
       } catch (err) {
         console.error(`Failed to fetch email body for ${msg.id}:`, err)
@@ -152,9 +227,28 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
-    // Classify the reply once
-    const classification = await classifyReply(env, replyText)
-    const effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
+    // Fix #4: If auto-responder detected via headers, skip LLM and use auto_reply directly
+    let effectiveIntent: IntentType
+    let classification: { intent: IntentType; confidence: number; resume_date: string | null }
+
+    if (detectedAutoResponder) {
+      console.log(`[reply-cron] Auto-responder detected via headers for ${fromEmail}, skipping LLM classification`)
+      classification = { intent: 'auto_reply' as IntentType, confidence: 1.0, resume_date: null }
+      effectiveIntent = 'auto_reply'
+    } else {
+      // Fix #1: Check LLM quota before classification
+      // Use the first matched contact's campaign for quota (all share the same msg)
+      const quotaCampaignId = contacts.results[0]._campaign_id
+      if (!await claimLlmQuota(env, quotaCampaignId)) {
+        console.warn(`[reply-cron] LLM quota exhausted for campaign ${quotaCampaignId}, skipping classification of ${fromEmail}`)
+        // Do not advance cursor — retry on next cron run when quota resets
+        continue
+      }
+
+      // Classify the reply once
+      classification = await classifyReply(env, replyText)
+      effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
+    }
 
     let msgProcessedOk = true
 
@@ -403,8 +497,30 @@ async function processAutoReply(
   intent: IntentType,
   originalMsg: any,
 ): Promise<void> {
-  // Get conversation history
-  const history = await getConversationHistory(env, contact.id)
+  // Fix #3: Atomic auto_reply_count claim — only proceed if we successfully increment
+  const maxReplies = campaign.max_auto_replies ?? 5
+  const claimResult = await env.DB.prepare(
+    "UPDATE campaign_contacts SET auto_reply_count = auto_reply_count + 1, updated_at = datetime('now') WHERE id = ? AND auto_reply_count < ?"
+  ).bind(contact.id, maxReplies).run()
+
+  if (!claimResult.meta?.changes) {
+    console.log(`[reply-cron] Auto-reply limit reached for contact ${contact.id}, skipping reply`)
+    await notifyOwner(env, campaign, 'conversation_stopped', {
+      contactEmail: contact.email,
+      contactName: contact.name,
+      reason: `Auto-reply limit reached (${maxReplies} replies)`,
+    })
+    return
+  }
+
+  // Fix #1: Check LLM quota before generateReply
+  if (!await claimLlmQuota(env, campaign.id)) {
+    console.warn(`[reply-cron] LLM quota exhausted for campaign ${campaign.id}, skipping reply generation for ${contact.id}`)
+    return
+  }
+
+  // Get conversation history (scoped to this campaign)
+  const history = await getConversationHistory(env, contact.id, campaign.id)
 
   // Parse knowledge base
   let kb: KnowledgeBase = {}
@@ -447,12 +563,9 @@ async function processAutoReply(
     null, // message_id filled after send — best effort
   )
 
-  // Increment auto_reply_count
-  await incrementAutoReplyCount(env, contact.id)
-
+  // auto_reply_count already atomically incremented above (Fix #3)
   // Check if we've now hit the limit
   const newCount = (contact.auto_reply_count ?? 0) + 1
-  const maxReplies = campaign.max_auto_replies ?? 5
   if (newCount >= maxReplies) {
     await notifyOwner(env, campaign, 'conversation_stopped', {
       contactEmail: contact.email,
@@ -490,17 +603,33 @@ async function sendAutoReply(
   replyBody: string,
   originalMsg: any,
 ): Promise<void> {
-  // Build threading headers
+  // Fix #8: Build threading headers with proper References chain and case-insensitive header lookup
   const headers: Record<string, string> = {}
   if (originalMsg.id) {
     try {
       const emailRes = await mailsFetch(env, `/v1/email?id=${originalMsg.id}`)
       if (emailRes.ok) {
         const emailData = await emailRes.json() as any
-        const msgId = emailData.message_id || emailData.headers?.['message-id']
+
+        // Case-insensitive header lookup
+        const rawHeaders = emailData.headers || {}
+        const normalizedHeaders: Record<string, string> = {}
+        for (const [k, v] of Object.entries(rawHeaders)) {
+          normalizedHeaders[k.toLowerCase()] = v as string
+        }
+
+        const msgId = emailData.message_id || normalizedHeaders['message-id']
         if (msgId) {
           headers['In-Reply-To'] = msgId
-          headers['References'] = msgId
+
+          // Build References chain: preserve existing References and append the current Message-ID
+          const existingRefs = normalizedHeaders['references'] || ''
+          if (existingRefs) {
+            // Append the new message-id to the existing chain
+            headers['References'] = `${existingRefs} ${msgId}`
+          } else {
+            headers['References'] = msgId
+          }
         }
       }
     } catch (err) {
@@ -514,8 +643,28 @@ async function sendAutoReply(
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
   Object.assign(headers, unsubHeaders)
 
+  // Fix #6: Replace links with tracking before adding compliance footer
+  let trackedBody = replyBody
+  if (!campaign.dry_run) {
+    const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
+    const { body: replaced } = await replaceLinksWithTracking(
+      replyBody,
+      contact.id,
+      campaign.id,
+      baseUrl,
+      env,
+    )
+    trackedBody = replaced
+  }
+
   // Add compliance footer
-  const fullBody = replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  const fullBody = trackedBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+
+  // Dry-run mode: log but don't actually send
+  if (campaign.dry_run) {
+    console.log(`[reply-cron] DRY RUN: would send auto-reply to ${contact.email}: ${replyBody.slice(0, 100)}...`)
+    return
+  }
 
   // Send via mails-agent API
   const sendRes = await mailsFetch(env, '/v1/send', {
@@ -570,15 +719,6 @@ async function sendFinalMessage(
   await env.DB.prepare(
     "UPDATE campaign_contacts SET status = 'stopped', auto_reply_count = auto_reply_count + 1, updated_at = datetime('now') WHERE id = ?"
   ).bind(contact.id).run()
-}
-
-/**
- * Increment the auto_reply_count for a contact.
- */
-async function incrementAutoReplyCount(env: Env, contactId: string): Promise<void> {
-  await env.DB.prepare(
-    "UPDATE campaign_contacts SET auto_reply_count = auto_reply_count + 1, updated_at = datetime('now') WHERE id = ?"
-  ).bind(contactId).run()
 }
 
 function extractEmail(str: string): string | null {

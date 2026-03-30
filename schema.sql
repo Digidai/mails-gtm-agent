@@ -173,3 +173,10 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 CREATE INDEX IF NOT EXISTS idx_conv_contact ON conversations(contact_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_campaign ON conversations(campaign_id, contact_id);
+
+-- v2.2: Atomic dedup for reply processing (replaces processed_inbound)
+CREATE TABLE IF NOT EXISTS processed_messages (
+  msg_id TEXT PRIMARY KEY,
+  contact_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
