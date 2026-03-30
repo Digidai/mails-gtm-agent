@@ -10,6 +10,7 @@ import {
 import { makeDecision } from '../agent/decide'
 import { replaceLinksWithTracking } from '../tracking/links'
 import { recordEvent } from '../events/record'
+import { reviewEmail, buildSafeEmail } from '../llm/review'
 import { TERMINAL_STATUSES } from './send-consumer'
 
 /**
@@ -196,14 +197,57 @@ async function processEvaluateMessage(
         })
       }
 
+      // --- Reviewer Agent: check email accuracy before sending ---
+      let emailSubject = decision.email.subject
       let emailBody = decision.email.body
+
+      // Claim LLM quota for review (1 call)
+      if (campaign.daily_llm_calls < campaign.daily_llm_limit) {
+        try {
+          await env.DB.prepare(
+            'UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ?',
+          ).bind(campaign_id).run()
+
+          const reviewResult = await reviewEmail(
+            env,
+            knowledgeBase,
+            emailSubject,
+            emailBody,
+            contact.name || contact.email,
+            campaign.product_name,
+          )
+
+          // Log review result
+          await recordEvent(env, campaign_id, contact_id, 'email_reviewed', {
+            approved: reviewResult.approved,
+            issues: reviewResult.issues,
+            corrected: !!reviewResult.corrected_body,
+          })
+
+          if (!reviewResult.approved) {
+            if (reviewResult.corrected_body) {
+              // Use the corrected version
+              emailBody = reviewResult.corrected_body
+              console.log(`[evaluate] Email for contact ${contact_id} corrected by reviewer`)
+            } else {
+              // Fallback to safe template
+              const safeEmail = buildSafeEmail(knowledgeBase, contact.name || contact.email)
+              emailSubject = safeEmail.subject
+              emailBody = safeEmail.body
+              console.log(`[evaluate] Email for contact ${contact_id} rejected by reviewer, using safe template`)
+            }
+          }
+        } catch (err) {
+          console.error(`[evaluate] Review failed for contact ${contact_id}, proceeding with original:`, err)
+        }
+      }
 
       // Only create tracked links for non-dry-run campaigns.
       // Dry-run tracked links would be reachable via /t/:id, leaking tracking URLs.
       if (!campaign.dry_run) {
         const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.workers.dev'
         const { body: trackedBody } = await replaceLinksWithTracking(
-          decision.email.body,
+          emailBody,
           contact_id,
           campaign_id,
           baseUrl,
@@ -227,7 +271,7 @@ async function processEvaluateMessage(
         contact_id,
         mailbox: campaign.from_email || env.MAILS_MAILBOX,
         to: contact.email,
-        subject: decision.email.subject,
+        subject: emailSubject,
         body: emailBody,
         angle: decision.email.angle,
         decision_id: decisionId,

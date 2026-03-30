@@ -1,6 +1,7 @@
 import { Env, Campaign, CampaignContact, IntentType, KnowledgeBase } from '../types'
 import { classifyReply } from '../llm/classify'
 import { generateReply } from '../llm/reply'
+import { reviewEmail, buildSafeEmail } from '../llm/review'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
@@ -550,15 +551,50 @@ async function processAutoReply(
     return
   }
 
+  // --- Reviewer Agent: check reply accuracy before sending ---
+  let finalReplyBody = result.reply
+  if (await claimLlmQuota(env, campaign.id)) {
+    try {
+      const reviewResult = await reviewEmail(
+        env,
+        kb,
+        `Re: ${originalMsg.subject || 'Follow up'}`,
+        result.reply,
+        contact.name || contact.email,
+        campaign.product_name,
+      )
+
+      await recordEvent(env, campaign.id, contact.id, 'email_reviewed', {
+        approved: reviewResult.approved,
+        issues: reviewResult.issues,
+        corrected: !!reviewResult.corrected_body,
+        context: 'auto_reply',
+      })
+
+      if (!reviewResult.approved) {
+        if (reviewResult.corrected_body) {
+          finalReplyBody = reviewResult.corrected_body
+          console.log(`[reply-cron] Reply for contact ${contact.id} corrected by reviewer`)
+        } else {
+          const safeEmail = buildSafeEmail(kb, contact.name || contact.email)
+          finalReplyBody = safeEmail.body
+          console.log(`[reply-cron] Reply for contact ${contact.id} rejected by reviewer, using safe template`)
+        }
+      }
+    } catch (err) {
+      console.error(`[reply-cron] Review failed for contact ${contact.id}, proceeding with original:`, err)
+    }
+  }
+
   // Send the generated reply
-  await sendAutoReply(env, campaign, contact, result.reply, originalMsg)
+  await sendAutoReply(env, campaign, contact, finalReplyBody, originalMsg)
 
   // Record agent reply to conversations
   await recordAgentMessage(
     env,
     campaign.id,
     contact.id,
-    result.reply,
+    finalReplyBody,
     `Re: ${originalMsg.subject || 'Follow up'}`,
     null, // message_id filled after send — best effort
   )
