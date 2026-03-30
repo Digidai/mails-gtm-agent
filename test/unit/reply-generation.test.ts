@@ -234,10 +234,12 @@ describe('Reply Generation', () => {
     )
 
     expect(capturedBody).not.toBeNull()
-    const systemPrompt = capturedBody.messages[0].content
-    expect(systemPrompt).toContain('[Agent] Hi Alice')
-    expect(systemPrompt).toContain('[Alice] How does it compare')
-    expect(systemPrompt).toContain('Can it replace Resend?')
+    // Conversation history and latest reply are in user prompt (messages[1])
+    // for security (untrusted content separated from system instructions)
+    const userPrompt = capturedBody.messages[1].content
+    expect(userPrompt).toContain('[Agent] Hi Alice')
+    expect(userPrompt).toContain('[Alice] How does it compare')
+    expect(userPrompt).toContain('Can it replace Resend?')
   })
 
   test('handles should_stop as non-boolean gracefully', async () => {
