@@ -222,9 +222,23 @@ async function listCampaigns(env: Env): Promise<Response> {
 }
 
 async function getCampaign(id: string, env: Env): Promise<Response> {
-  const campaign = await env.DB.prepare('SELECT * FROM campaigns WHERE id = ?').bind(id).first()
+  const campaign = await env.DB.prepare('SELECT * FROM campaigns WHERE id = ?').bind(id).first<Campaign>()
   if (!campaign) {
     return json({ error: 'Campaign not found' }, 404)
+  }
+
+  // Self-heal stale 'generating' status: if updated_at is more than 2 minutes ago,
+  // the generation likely timed out (Worker killed). Reset to 'failed' so the user
+  // can retry via /knowledge/refresh.
+  if (campaign.knowledge_base_status === 'generating') {
+    const updatedAt = new Date(campaign.updated_at).getTime()
+    const twoMinutesAgo = Date.now() - 2 * 60 * 1000
+    if (updatedAt < twoMinutesAgo) {
+      await env.DB.prepare(
+        "UPDATE campaigns SET knowledge_base_status = 'failed', updated_at = datetime('now') WHERE id = ? AND knowledge_base_status = 'generating'",
+      ).bind(id).run()
+      ;(campaign as any).knowledge_base_status = 'failed'
+    }
   }
 
   const stats = await env.DB.prepare(`

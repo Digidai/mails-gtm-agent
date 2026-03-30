@@ -358,12 +358,21 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     return
   }
 
-  // R2-6: Atomically claim a global send slot before sending
-  const slotClaimed = await claimGlobalSendSlot(env)
-  if (!slotClaimed) {
-    console.log(`Global daily send limit reached, requeueing sequence send for contact ${contact_id}`)
-    msg.retry()
+  // CAN-SPAM: refuse to send without physical address (parity with v2 agent send)
+  if (!campaign.physical_address?.trim()) {
+    console.error(`Campaign ${campaign_id}: refusing to send without physical address (CAN-SPAM)`)
+    msg.ack()
     return
+  }
+
+  // R2-6: Atomically claim a global send slot before sending (skip for dry-run)
+  if (!campaign.dry_run) {
+    const slotClaimed = await claimGlobalSendSlot(env)
+    if (!slotClaimed) {
+      console.log(`Global daily send limit reached, requeueing sequence send for contact ${contact_id}`)
+      msg.retry()
+      return
+    }
   }
 
   const unsub = await env.DB.prepare(
@@ -384,6 +393,27 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
+
+  // Dry-run mode: log but don't send (parity with v2 agent send)
+  if (campaign.dry_run) {
+    await env.DB.prepare(`
+      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'dry_run')
+    `).bind(
+      crypto.randomUUID().replace(/-/g, ''),
+      campaign_id,
+      contact_id,
+      step_number,
+      subject,
+      fullBody,
+    ).run()
+
+    await recordEvent(env, campaign_id, contact_id, 'email_sent', {
+      subject, step_number, dry_run: true,
+    })
+    msg.ack()
+    return
+  }
 
   const sendRes = await mailsFetch(env, '/v1/send', {
     method: 'POST',
