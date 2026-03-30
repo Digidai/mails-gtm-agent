@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   daily_llm_calls INTEGER NOT NULL DEFAULT 0,
   daily_llm_limit INTEGER NOT NULL DEFAULT 100,
   daily_llm_reset_at TEXT,
+  max_auto_replies INTEGER NOT NULL DEFAULT 5,
 
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
   conversion_type TEXT, -- signup / payment / null
   next_check_at TEXT,
   last_enqueued_at TEXT, -- dedup guard
+  auto_reply_count INTEGER NOT NULL DEFAULT 0,
 
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -156,3 +158,18 @@ CREATE TABLE IF NOT EXISTS decision_log (
 
 CREATE INDEX IF NOT EXISTS idx_decision_log_contact ON decision_log(contact_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_decision_log_campaign ON decision_log(campaign_id, created_at);
+
+-- v2.1: Conversational AI SDR
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  campaign_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('agent', 'contact')),
+  content TEXT NOT NULL,
+  message_id TEXT,
+  subject TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_conv_contact ON conversations(contact_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conv_campaign ON conversations(campaign_id, contact_id);

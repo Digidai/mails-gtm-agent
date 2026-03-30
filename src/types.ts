@@ -44,6 +44,9 @@ export interface Campaign {
   daily_llm_limit: number
   daily_llm_reset_at: string | null
 
+  // v2.1 fields
+  max_auto_replies: number
+
   created_at: string
   updated_at: string
 }
@@ -80,6 +83,9 @@ export interface CampaignContact {
   conversion_type: string | null
   next_check_at: string | null
   last_enqueued_at: string | null
+
+  // v2.1 fields
+  auto_reply_count: number
 
   created_at: string
   updated_at: string
@@ -141,6 +147,15 @@ export interface ContactImportRow {
   company?: string
   role?: string
   [key: string]: string | undefined
+}
+
+// v2.1 types — Conversational AI SDR
+
+export interface ConversationMessage {
+  role: 'agent' | 'contact'
+  content: string
+  subject?: string
+  created_at: string
 }
 
 // v2 types

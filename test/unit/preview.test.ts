@@ -81,6 +81,7 @@ function mockContact(overrides: Partial<CampaignContact> = {}): CampaignContact 
     conversion_type: null,
     next_check_at: null,
     last_enqueued_at: null,
+    auto_reply_count: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

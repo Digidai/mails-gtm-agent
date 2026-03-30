@@ -5,6 +5,7 @@ import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../com
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
+import { recordAgentMessage } from '../conversations/context'
 
 /**
  * R2-6: Atomically claim a send slot against the global daily send limit.
@@ -287,6 +288,13 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
         "INSERT INTO daily_stats (id, campaign_id, date, sent_count) VALUES (?, ?, ?, 1) ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1",
       ).bind(statsId, campaign_id, today),
     ])
+
+    // v2.1: Record agent message to conversations for context tracking
+    try {
+      await recordAgentMessage(env, campaign_id, contact_id, fullBody, subject, messageId)
+    } catch (convErr) {
+      console.error(`[send-consumer] Failed to record agent message to conversations:`, convErr)
+    }
   } catch (dbErr) {
     // Email was already sent — log the DB failure but do NOT retry
     console.error(`[CRITICAL] Email sent to ${to} (msgId=${messageId}) but post-send DB update failed:`, dbErr)
@@ -498,6 +506,13 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
       campaign_id,
       today,
     ).run()
+
+    // v2.1: Record agent message to conversations for context tracking
+    try {
+      await recordAgentMessage(env, campaign_id, contact_id, fullBody, subject, messageId)
+    } catch (convErr) {
+      console.error(`[send-consumer] Failed to record agent message to conversations:`, convErr)
+    }
   } catch (dbErr) {
     // Email was already sent — log the DB failure but do NOT retry
     console.error(`[CRITICAL] Email sent to ${contact.email} (msgId=${messageId}) but post-send DB update failed:`, dbErr)
