@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "mails-gtm": "cli/index.ts"
+    "mails-gtm": "cli/index.ts",
+    "mails-gtm-mcp": "mcp/index.ts"
   },
   "scripts": {
     "dev": "wrangler dev",

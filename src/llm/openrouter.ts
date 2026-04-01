@@ -62,7 +62,7 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: env?.LLM_MODEL || 'anthropic/claude-sonnet-4',
         max_tokens: 1024,
         messages: [
           { role: 'system', content: systemPrompt },
