@@ -37,7 +37,8 @@ export function generateComplianceFooter(physicalAddress: string, unsubscribeUrl
  * Generate HTML compliance footer. Unsubscribe is a clean link, not a raw URL.
  */
 export function generateComplianceFooterHtml(physicalAddress: string, unsubscribeUrl: string): string {
-  const address = physicalAddress?.trim() || '[Physical address not configured]'
+  const rawAddress = physicalAddress?.trim() || '[Physical address not configured]'
+  const address = rawAddress.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<br><hr style="border:none;border-top:1px solid #ddd;margin:16px 0">
 <p style="color:#999;font-size:12px">${address}<br>
 <a href="${unsubscribeUrl}" style="color:#999">Unsubscribe</a></p>`

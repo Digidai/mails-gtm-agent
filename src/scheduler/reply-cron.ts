@@ -145,7 +145,9 @@ async function _replyCron(env: Env): Promise<void> {
             const realFrom = extractEmail(headerFrom)
             if (realFrom) fromEmail = realFrom
           }
-        } catch {}
+        } catch (err) {
+          console.error(`[reply-cron] Failed to fetch email headers for bounce resolution:`, err)
+        }
       }
     }
 
