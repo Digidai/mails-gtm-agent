@@ -8,7 +8,7 @@ import {
   KnowledgeBase,
 } from '../types'
 import { makeDecision } from '../agent/decide'
-import { replaceLinksWithTracking } from '../tracking/links'
+import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
 import { TERMINAL_STATUSES } from './send-consumer'
@@ -244,16 +244,17 @@ async function processEvaluateMessage(
 
       // Only create tracked links for non-dry-run campaigns.
       // Dry-run tracked links would be reachable via /t/:id, leaking tracking URLs.
+      let htmlBody: string | undefined
       if (!campaign.dry_run) {
         const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.genedai.workers.dev'
-        const { body: trackedBody } = await replaceLinksWithTracking(
+        const { html } = await replaceLinksWithTrackingDual(
           emailBody,
           contact_id,
           campaign_id,
           baseUrl,
           env,
         )
-        emailBody = trackedBody
+        htmlBody = html
       }
 
       // Fix 7: Update contact status FIRST, then enqueue.
@@ -264,7 +265,7 @@ async function processEvaluateMessage(
         "UPDATE campaign_contacts SET status = 'active', next_check_at = NULL, updated_at = datetime('now') WHERE id = ?",
       ).bind(contact_id).run()
 
-      // Enqueue to send queue
+      // Enqueue to send queue (body = plain text with original URLs, htmlBody = tracked <a> tags)
       const sendMessage: AgentSendMessage = {
         type: 'agent_send',
         campaign_id,
@@ -273,6 +274,7 @@ async function processEvaluateMessage(
         to: contact.email,
         subject: emailSubject,
         body: emailBody,
+        htmlBody,
         angle: decision.email.angle,
         decision_id: decisionId,
       }

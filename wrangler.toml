@@ -14,7 +14,7 @@ queue = "mails-gtm-send"
 
 [[queues.consumers]]
 queue = "mails-gtm-send"
-max_batch_size = 1
+max_batch_size = 10
 max_retries = 3
 
 # v2: evaluate queue (agent engine only)
@@ -24,7 +24,7 @@ queue = "mails-gtm-evaluate"
 
 [[queues.consumers]]
 queue = "mails-gtm-evaluate"
-max_batch_size = 1
+max_batch_size = 10
 max_retries = 3
 
 # Service binding to mails-worker (avoids error 1042 on worker-to-worker calls)

@@ -4,6 +4,7 @@ export interface Env {
   EVALUATE_QUEUE: Queue
   MAILS_WORKER?: Fetcher      // Service binding to mails-worker (avoids error 1042)
   OPENROUTER_API_KEY: string
+  LLM_MODEL?: string          // default: 'anthropic/claude-sonnet-4'
   MAILS_API_URL: string       // fallback: https://mails-worker.genedai.workers.dev
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email
@@ -107,6 +108,7 @@ export interface AgentSendMessage {
   to: string
   subject: string
   body: string
+  htmlBody?: string  // HTML version with tracked links as <a> tags
   angle: string
   decision_id: string
 }
