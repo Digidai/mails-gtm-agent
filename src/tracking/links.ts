@@ -113,6 +113,8 @@ export function buildHtmlBody(
     } catch {
       displayText = original
     }
+    // HTML-escape displayText to prevent stored XSS via malicious URLs
+    displayText = displayText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     html = html.split(escapedOriginal).join(`<a href="${tracked}">${displayText}</a>`)
   }
 
