@@ -7,8 +7,8 @@ import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 import { recordContactMessage, recordAgentMessage, getConversationHistory } from '../conversations/context'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
-import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
-import { replaceLinksWithTracking } from '../tracking/links'
+import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
+import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { TERMINAL_STATUSES } from '../queue/send-consumer'
 
 /**
@@ -84,7 +84,7 @@ async function _replyCron(env: Env): Promise<void> {
 
   const since = sinceRow?.last_check || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  // Fetch inbound emails once for all campaigns
+  // Fetch inbound emails once for all campaigns (limit=100 from API, process max 10 per cron)
   const res = await mailsFetch(env, '/v1/inbox?direction=inbound&limit=100')
 
   if (!res.ok) {
@@ -96,10 +96,25 @@ async function _replyCron(env: Env): Promise<void> {
   const data = await res.json() as any
   const allMessages = data.messages || data.emails || []
 
-  const messages = allMessages.filter((msg: any) => {
+  const MAX_REPLIES_PER_CRON = 10
+
+  const filtered = allMessages.filter((msg: any) => {
     const receivedAt = msg.received_at || msg.created_at || ''
     return receivedAt > since
   })
+
+  // Sort oldest-first so we process in chronological order.
+  // This prevents the cursor from jumping past unprocessed older messages
+  // when MAX_REPLIES_PER_CRON limits how many we handle per cycle.
+  filtered.sort((a: any, b: any) => {
+    const ta = a.received_at || a.created_at || ''
+    const tb = b.received_at || b.created_at || ''
+    return ta < tb ? -1 : ta > tb ? 1 : 0
+  })
+
+  // Process at most MAX_REPLIES_PER_CRON per cron run to avoid Workers timeout.
+  // Remaining messages will be picked up on the next 5-minute cron cycle.
+  const messages = filtered.slice(0, MAX_REPLIES_PER_CRON)
 
   if (!messages.length) {
     // Update all active campaigns' last_inbox_check_at
@@ -116,7 +131,24 @@ async function _replyCron(env: Env): Promise<void> {
   for (const msg of messages) {
     const msgReceivedAt = msg.received_at || msg.created_at || ''
 
-    const fromEmail = extractEmail(msg.from || msg.from_address || '')
+    let fromEmail = extractEmail(msg.from || msg.from_address || '')
+
+    // If from_address is a bounce/relay address (e.g. Resend's envelope sender),
+    // fetch full email headers to get the real RFC822 From header.
+    if (!fromEmail || fromEmail.includes('@send.') || fromEmail.includes('bounces+')) {
+      if (msg.id) {
+        try {
+          const emailRes = await mailsFetch(env, `/v1/email?id=${msg.id}`)
+          if (emailRes.ok) {
+            const emailData = await emailRes.json() as any
+            const headerFrom = emailData.headers?.from || emailData.headers?.From || ''
+            const realFrom = extractEmail(headerFrom)
+            if (realFrom) fromEmail = realFrom
+          }
+        } catch {}
+      }
+    }
+
     if (!fromEmail) {
       // No valid sender — still count as processed (not an error)
       if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
@@ -680,22 +712,25 @@ async function sendAutoReply(
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
   Object.assign(headers, unsubHeaders)
 
-  // Fix #6: Replace links with tracking before adding compliance footer
-  let trackedBody = replyBody
+  // Fix #6: Replace links with tracking and build HTML version
+  let htmlBody: string | undefined
   if (!campaign.dry_run) {
     const baseUrl = env.UNSUBSCRIBE_BASE_URL || 'https://mails-gtm-agent.genedai.workers.dev'
-    const { body: replaced } = await replaceLinksWithTracking(
+    const { html } = await replaceLinksWithTrackingDual(
       replyBody,
       contact.id,
       campaign.id,
       baseUrl,
       env,
     )
-    trackedBody = replaced
+    htmlBody = html
   }
 
-  // Add compliance footer
-  const fullBody = trackedBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  // Add compliance footer (text keeps original URLs, HTML has tracked <a> tags)
+  const fullBody = replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  const fullHtml = htmlBody
+    ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+    : undefined
 
   // Dry-run mode: log but don't actually send
   if (campaign.dry_run) {
@@ -703,17 +738,20 @@ async function sendAutoReply(
     return
   }
 
-  // Send via mails-agent API
+  // Send via mails-agent API (text + html for clean display)
+  const sendPayload: Record<string, unknown> = {
+    from: campaign.from_email || env.MAILS_MAILBOX,
+    to: [contact.email],
+    subject: `Re: ${originalMsg.subject || 'Follow up'}`,
+    text: fullBody,
+    headers,
+  }
+  if (fullHtml) sendPayload.html = fullHtml
+
   const sendRes = await mailsFetch(env, '/v1/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: campaign.from_email || env.MAILS_MAILBOX,
-      to: [contact.email],
-      subject: `Re: ${originalMsg.subject || 'Follow up'}`,
-      text: fullBody,
-      headers,
-    }),
+    body: JSON.stringify(sendPayload),
   })
 
   if (!sendRes.ok) {

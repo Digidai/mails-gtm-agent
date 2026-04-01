@@ -1,7 +1,8 @@
 import { Env, SendMessage, AgentSendMessage, Campaign, CampaignContact, CampaignStep } from '../types'
 import { generateEmail } from '../llm/generate'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
-import { generateListUnsubscribeHeaders, generateComplianceFooter } from '../compliance/headers'
+import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
+import { buildHtmlBody } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
@@ -72,7 +73,7 @@ export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void>
  * We just add compliance headers/footer and send.
  */
 async function processAgentSend(message: AgentSendMessage, env: Env, msg: Message): Promise<void> {
-  const { campaign_id, contact_id, mailbox, to, subject, body, angle, decision_id } = message
+  const { campaign_id, contact_id, mailbox, to, subject, body, htmlBody, angle, decision_id } = message
 
   // P0-1: Idempotent check — skip if this decision was already sent
   if (decision_id) {
@@ -157,6 +158,12 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
+  // Build HTML version (tracked links in <a> tags + clean footer)
+  let fullHtml: string | undefined
+  if (htmlBody) {
+    fullHtml = htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+  }
+
   // Dry-run mode: log but don't send
   if (campaign.dry_run) {
     await env.DB.prepare(`
@@ -180,19 +187,22 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     return
   }
 
-  // Send via mails-agent API
+  // Send via mails-agent API (text = clean original URLs, html = tracked <a> tags)
+  const sendPayload: Record<string, unknown> = {
+    from: mailbox,
+    to: [to],
+    subject,
+    text: fullBody,
+    headers: unsubHeaders,
+  }
+  if (fullHtml) sendPayload.html = fullHtml
+
   const sendRes = await mailsFetch(env, '/v1/send', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from: mailbox,
-      to: [to],
-      subject,
-      text: fullBody,
-      headers: unsubHeaders,
-    }),
+    body: JSON.stringify(sendPayload),
   })
 
   if (!sendRes.ok) {
@@ -394,6 +404,9 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
+  // Build HTML version with clean footer (v1 has no tracked links, just clean unsubscribe)
+  const fullHtml = buildHtmlBody(body, []) + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+
   // Dry-run mode: log but don't send (parity with v2 agent send)
   if (campaign.dry_run) {
     await env.DB.prepare(`
@@ -425,6 +438,7 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
       to: [contact.email],
       subject,
       text: fullBody,
+      html: fullHtml,
       headers: unsubHeaders,
     }),
   })
@@ -500,42 +514,34 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     }
 
     const newStatus = nextStep < steps.length ? 'pending' : 'sent'
-    await env.DB.prepare(`
-      UPDATE campaign_contacts
-      SET status = ?, current_step = ?, next_send_at = ?, last_sent_at = datetime('now'),
-          sent_message_id = ?, emails_sent = emails_sent + 1, updated_at = datetime('now')
-      WHERE id = ?
-    `).bind(
-      newStatus,
-      nextStep < steps.length ? nextStep : step_number,
-      nextSendAt,
-      messageId,
-      contact_id,
-    ).run()
+    const now = new Date().toISOString()
+    const today = now.slice(0, 10)
+    const sendLogId = crypto.randomUUID().replace(/-/g, '')
+    const statsId = crypto.randomUUID().replace(/-/g, '')
 
-    await env.DB.prepare(`
-      INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')
-    `).bind(
-      crypto.randomUUID().replace(/-/g, ''),
-      campaign_id,
-      contact_id,
-      step_number,
-      subject,
-      fullBody,
-      messageId,
-    ).run()
-
-    const today = new Date().toISOString().slice(0, 10)
-    await env.DB.prepare(`
-      INSERT INTO daily_stats (id, campaign_id, date, sent_count)
-      VALUES (?, ?, ?, 1)
-      ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1
-    `).bind(
-      crypto.randomUUID().replace(/-/g, ''),
-      campaign_id,
-      today,
-    ).run()
+    // Batch all post-send DB writes for atomicity (parity with v2 agent send)
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE campaign_contacts
+        SET status = ?, current_step = ?, next_send_at = ?, last_sent_at = ?,
+            sent_message_id = ?, emails_sent = emails_sent + 1, updated_at = ?
+        WHERE id = ?
+      `).bind(
+        newStatus,
+        nextStep < steps.length ? nextStep : step_number,
+        nextSendAt,
+        now,
+        messageId,
+        now,
+        contact_id,
+      ),
+      env.DB.prepare(
+        "INSERT INTO send_log (id, campaign_id, contact_id, step_number, subject, body, message_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'sent')",
+      ).bind(sendLogId, campaign_id, contact_id, step_number, subject, fullBody, messageId),
+      env.DB.prepare(
+        "INSERT INTO daily_stats (id, campaign_id, date, sent_count) VALUES (?, ?, ?, 1) ON CONFLICT(campaign_id, date) DO UPDATE SET sent_count = sent_count + 1",
+      ).bind(statsId, campaign_id, today),
+    ])
 
     // v2.1: Record agent message to conversations for context tracking
     try {
