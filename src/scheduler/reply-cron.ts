@@ -314,11 +314,19 @@ async function _replyCron(env: Env): Promise<void> {
           snippet: replyText.slice(0, 200),
         })
 
-        // v2.1: Record contact message to conversations table
-        await recordContactMessage(env, campaign.id, contact.id, replyText, msg.id || null)
+        // v2.1: Record contact message to conversations table (with content dedup to avoid
+        // duplicate entries when the same reply arrives as multiple inbox entries)
+        const recentConvs = await getConversationHistory(env, contact.id, campaign.id)
+        const lastContactMsg = [...recentConvs].reverse().find(m => m.role === 'contact')
+        const isDuplicateContent = lastContactMsg && lastContactMsg.content.trim() === replyText.trim()
+        if (!isDuplicateContent) {
+          await recordContactMessage(env, campaign.id, contact.id, replyText, msg.id || null)
+        }
 
-        // Execute action based on intent
-        await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
+        // Execute action based on intent (skip if duplicate content to avoid double-processing)
+        if (!isDuplicateContent) {
+          await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
+        }
       } catch (err) {
         console.error(`Reply processing error for contact ${contact.id}:`, err)
         msgProcessedOk = false
@@ -548,10 +556,27 @@ async function processAutoReply(
     return
   }
 
-  // For not_interested intent: send a polite final reply and stop immediately.
-  // No need to waste an LLM call on generateReply — the reply is discarded anyway.
-  if (intent === 'not_interested') {
+  // For not_interested / wrong_person: send a polite goodbye and stop.
+  // No need to waste an LLM call — these are terminal intents.
+  if (intent === 'not_interested' || intent === 'wrong_person') {
     await sendFinalMessage(env, campaign, contact, originalMsg)
+    return
+  }
+
+  // For not_now: send a brief acknowledgment, do NOT call LLM (avoid should_stop risk).
+  if (intent === 'not_now') {
+    const NOT_NOW_REPLIES = [
+      'No rush at all. I will check back with you then.',
+      'Makes sense. I will follow up when the timing is better.',
+      'Understood. Will reach out again down the road.',
+    ]
+    const notNowMsg = NOT_NOW_REPLIES[Math.floor(Math.random() * NOT_NOW_REPLIES.length)]
+    try {
+      await sendAutoReply(env, campaign, contact, notNowMsg, originalMsg)
+      await recordAgentMessage(env, campaign.id, contact.id, notNowMsg, `Re: ${originalMsg.subject || 'Follow up'}`, null)
+    } catch (err) {
+      console.error(`[reply-cron] not_now reply failed for ${contact.id}:`, err)
+    }
     return
   }
 
@@ -774,7 +799,14 @@ async function sendFinalMessage(
   contact: CampaignContact,
   originalMsg: any,
 ): Promise<void> {
-  const finalMsg = 'Thank you for your time. Feel free to reach out if you need anything in the future.'
+  const GOODBYE_VARIANTS = [
+    'Thanks for letting me know. No worries at all.',
+    'Got it, appreciate you taking the time to reply.',
+    'Understood. If things change down the road, you know where to find us.',
+    'No problem. Wishing you and the team all the best.',
+    'Thanks for the reply. I will not follow up further.',
+  ]
+  const finalMsg = GOODBYE_VARIANTS[Math.floor(Math.random() * GOODBYE_VARIANTS.length)]
 
   try {
     await sendAutoReply(env, campaign, contact, finalMsg, originalMsg)
