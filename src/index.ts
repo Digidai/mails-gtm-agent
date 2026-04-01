@@ -9,6 +9,7 @@ import { handlePreviewRoutes } from './routes/preview'
 import { sendCron } from './scheduler/send-cron'
 import { agentCron } from './scheduler/agent-cron'
 import { replyCron } from './scheduler/reply-cron'
+import { summaryCron } from './scheduler/summary-cron'
 import { sendConsumer } from './queue/send-consumer'
 import { evaluateConsumer } from './queue/evaluate-consumer'
 import { handleWebhookEvent } from './events/webhook'
@@ -57,11 +58,14 @@ async function checkAuth(request: Request, env: Env): Promise<boolean> {
   return timingSafeEqual(token, env.ADMIN_TOKEN)
 }
 
-function setDefaults(env: Env, url?: URL): void {
+async function setDefaults(env: Env, url?: URL): Promise<void> {
   env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
   if (!env.UNSUBSCRIBE_SECRET) {
-    console.warn('[SECURITY] UNSUBSCRIBE_SECRET not set, falling back to ADMIN_TOKEN. Set a separate secret in production.')
-    env.UNSUBSCRIBE_SECRET = env.ADMIN_TOKEN
+    console.error('[SECURITY] UNSUBSCRIBE_SECRET not set! Deriving from ADMIN_TOKEN (not recommended for production)')
+    // Derive a separate key rather than reusing ADMIN_TOKEN directly
+    const encoder = new TextEncoder()
+    const keyData = await crypto.subtle.digest('SHA-256', encoder.encode('unsubscribe:' + env.ADMIN_TOKEN))
+    env.UNSUBSCRIBE_SECRET = Array.from(new Uint8Array(keyData)).map(b => b.toString(16).padStart(2, '0')).join('')
   }
   env.MAILS_MAILBOX = env.MAILS_MAILBOX || ''
   env.DAILY_SEND_LIMIT = env.DAILY_SEND_LIMIT || '100'
@@ -81,7 +85,7 @@ export default {
       return new Response(null, { status: 204, headers: CORS_HEADERS })
     }
 
-    setDefaults(env, url)
+    await setDefaults(env, url)
 
     // ===== PUBLIC ENDPOINTS (no auth) =====
 
@@ -145,7 +149,7 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    setDefaults(env)
+    await setDefaults(env)
 
     const minute = new Date(event.scheduledTime).getMinutes()
 
@@ -162,10 +166,16 @@ export default {
     if (minute % 5 === 0) {
       ctx.waitUntil(replyCron(env))
     }
+
+    // Daily summary (once per day at 09:00 UTC)
+    const hour = new Date(event.scheduledTime).getUTCHours()
+    if (hour === 9 && minute === 0) {
+      ctx.waitUntil(summaryCron(env))
+    }
   },
 
   async queue(batch: MessageBatch, env: Env): Promise<void> {
-    setDefaults(env)
+    await setDefaults(env)
 
     // Check queue name to route to correct consumer
     const queueName = (batch as any).queue || ''

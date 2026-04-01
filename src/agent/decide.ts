@@ -4,6 +4,50 @@ import { checkHardRules } from './rules'
 import { truncateKnowledgeBase } from '../knowledge/generate'
 
 /**
+ * Fetch historical angle performance stats for this campaign.
+ * Returns a summary string like "product_intro: 5 sent, 2 clicked, 1 converted (20%)"
+ * that gets injected into the LLM prompt so the agent learns from past results.
+ */
+export async function getAngleStats(env: Env, campaignId: string): Promise<string> {
+  try {
+    const rows = await env.DB.prepare(`
+      SELECT
+        dl.email_angle as angle,
+        COUNT(*) as total,
+        SUM(CASE WHEN e_click.id IS NOT NULL THEN 1 ELSE 0 END) as clicks,
+        SUM(CASE WHEN cc.status = 'converted' AND cc.converted_at IS NOT NULL THEN 1 ELSE 0 END) as conversions,
+        SUM(CASE WHEN cc.status = 'interested' THEN 1 ELSE 0 END) as interested
+      FROM decision_log dl
+      JOIN campaign_contacts cc ON cc.id = dl.contact_id
+      LEFT JOIN events e_click ON e_click.contact_id = dl.contact_id
+        AND e_click.event_type = 'link_click'
+        AND e_click.created_at > dl.created_at
+      WHERE dl.campaign_id = ? AND dl.action = 'send' AND dl.email_angle IS NOT NULL
+      GROUP BY dl.email_angle
+      ORDER BY conversions DESC, clicks DESC
+    `).bind(campaignId).all<{
+      angle: string
+      total: number
+      clicks: number
+      conversions: number
+      interested: number
+    }>()
+
+    if (!rows.results?.length) return ''
+
+    const lines = rows.results.map(r => {
+      const convRate = r.total > 0 ? Math.round((r.conversions / r.total) * 100) : 0
+      const clickRate = r.total > 0 ? Math.round((r.clicks / r.total) * 100) : 0
+      return `- ${r.angle}: ${r.total} sent, ${r.clicks} clicked (${clickRate}%), ${r.conversions} converted (${convRate}%), ${r.interested} interested`
+    })
+
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Make a decision for a contact: send, wait, or stop.
  *
  * 1. Check hard rules (code-enforced limits)
@@ -42,8 +86,11 @@ export async function makeDecision(
     }
   }
 
-  // 2. Build LLM context and call
-  const systemPrompt = buildSystemPrompt(campaign, contact, events, knowledgeBase)
+  // 2. Fetch historical angle performance for self-learning
+  const angleStats = await getAngleStats(env, campaign.id)
+
+  // 3. Build LLM context and call
+  const systemPrompt = buildSystemPrompt(campaign, contact, events, knowledgeBase, angleStats)
   const userPrompt = 'Based on the above context, make your decision. Return ONLY valid JSON.'
 
   try {
@@ -52,7 +99,10 @@ export async function makeDecision(
     // Extract JSON from response (balanced brace extraction)
     const jsonStr = extractJson(raw)
     if (jsonStr) {
-      const parsed = JSON.parse(jsonStr) as AgentDecision
+      const parsed = JSON.parse(jsonStr)
+      if (!parsed || typeof parsed !== 'object' || !parsed.action) {
+        throw new Error('Invalid LLM response: missing required "action" field')
+      }
 
       // Validate action
       if (!['send', 'wait', 'stop'].includes(parsed.action)) {
@@ -88,7 +138,7 @@ export async function makeDecision(
     return {
       action: 'wait',
       reasoning: `LLM decision failed: ${(err as Error).message}. Will retry later.`,
-      wait_days: 1,
+      wait_days: 3,  // Increased from 1 to prevent retry storms on persistent LLM failures
       llm_called: true, // LLM was called (even though it failed)
     }
   }
@@ -133,6 +183,7 @@ function buildSystemPrompt(
   contact: CampaignContact,
   events: Event[],
   kb: KnowledgeBase,
+  angleStats: string = '',
 ): string {
   const kbJson = truncateKnowledgeBase(kb)
 
@@ -197,26 +248,18 @@ ${timeline}
 - Contact status: ${contact.status}
 - Conversion status: ${conversionStatus}
 
-## Rules
+${angleStats ? `## Historical Performance (learn from past results)\n${angleStats}\n\nUse these stats to guide your angle selection. Prefer angles with higher click/conversion rates. Avoid angles that have been tried many times with no engagement.\n\n` : ''}## Rules
 1. Maximum ${campaign.max_emails} emails total (currently sent: ${contact.emails_sent})
 2. Minimum ${campaign.min_interval_days} days between emails
 3. If already converted (signup/payment), send a thank-you email then stop
 4. If they replied "not interested" or "unsubscribe", stop immediately
 5. Do NOT repeat the same angle/approach as a previous email
 6. Every email MUST include the conversion link: ${campaign.conversion_url || '(not set)'}
-7. Keep emails concise (max 4 sentences), professional, and value-driven
+7. Keep emails concise (max 5 sentences), professional, and value-driven
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
 10. End every email with exactly "Best,\n[sender name or team name]" — do NOT add footer, unsubscribe link, or physical address (those are added automatically)
 11. Do NOT include "[Your name]" placeholder — use the product name as sender
-
-## Writing Style (CRITICAL)
-- Write like a real person, not a sales bot. Short, direct, no fluff.
-- VARY your opening. Do NOT always start with "Saw you're [role] at [company]". Use different approaches: ask a question, mention a pain point, share a quick insight, or lead with the product benefit.
-- NEVER use these AI filler phrases: "Great question!", "Absolutely!", "Sure!", "I'd be happy to", "Totally understand", "That's a great point"
-- NEVER use exclamation marks more than once per email
-- Do NOT list features in bullet points. Pick ONE relevant angle and talk about it naturally.
-- Sound like a short note from a developer, not a marketing email
 
 ## Decision
 Return ONLY valid JSON:
