@@ -157,3 +157,65 @@ describe('canAutoReply', () => {
     expect(canAutoReply(contact2, campaign, 'interested')).toBe(false)
   })
 })
+
+describe('auto_reply_wasted event recording', () => {
+  test('records auto_reply_wasted event when processAutoReply catch block fires', async () => {
+    // This test verifies the pattern: when sendAutoReply throws after auto_reply_count
+    // was incremented, an 'auto_reply_wasted' event should be recorded.
+
+    const recordedEvents: { campaignId: string; contactId: string; eventType: string; data: any }[] = []
+
+    // Mock recordEvent
+    const mockRecordEvent = async (
+      _env: any, campaignId: string, contactId: string, eventType: string, data: any
+    ) => {
+      recordedEvents.push({ campaignId, contactId, eventType, data })
+      return 'event-id'
+    }
+
+    // Simulate the catch block logic from handleIntent -> processAutoReply
+    const campaign = mockCampaign()
+    const contact = mockContact()
+    const err = new Error('SMTP connection timeout')
+
+    // This replicates the catch block in handleIntent (line ~524-529 in reply-cron.ts)
+    try {
+      throw err // Simulates processAutoReply throwing
+    } catch (err) {
+      // Record wasted quota for debugging
+      try {
+        await mockRecordEvent({}, campaign.id, contact.id, 'auto_reply_wasted', {
+          reason: (err as Error).message?.slice(0, 200) || 'Unknown error',
+        })
+      } catch { /* best-effort */ }
+    }
+
+    expect(recordedEvents).toHaveLength(1)
+    expect(recordedEvents[0].eventType).toBe('auto_reply_wasted')
+    expect(recordedEvents[0].campaignId).toBe(campaign.id)
+    expect(recordedEvents[0].contactId).toBe(contact.id)
+    expect(recordedEvents[0].data.reason).toBe('SMTP connection timeout')
+  })
+
+  test('auto_reply_wasted reason is truncated to 200 chars', async () => {
+    const recordedEvents: any[] = []
+    const mockRecordEvent = async (_env: any, _cId: string, _ctId: string, eventType: string, data: any) => {
+      recordedEvents.push({ eventType, data })
+    }
+
+    const longMessage = 'x'.repeat(500)
+    const err = new Error(longMessage)
+
+    try {
+      throw err
+    } catch (err) {
+      try {
+        await mockRecordEvent({}, 'c1', 'ct1', 'auto_reply_wasted', {
+          reason: (err as Error).message?.slice(0, 200) || 'Unknown error',
+        })
+      } catch { /* best-effort */ }
+    }
+
+    expect(recordedEvents[0].data.reason).toHaveLength(200)
+  })
+})

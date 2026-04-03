@@ -120,6 +120,14 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
 
   const { contacts, errors, duplicates } = parseCsv(csvText)
 
+  // Enforce row count limit to prevent D1 write overload and Workers CPU timeout
+  const MAX_CONTACTS_PER_IMPORT = parseInt(env.MAX_CONTACTS_PER_IMPORT || '10000', 10)
+  if (contacts.length > MAX_CONTACTS_PER_IMPORT) {
+    return json({
+      error: `Too many contacts: ${contacts.length}. Maximum ${MAX_CONTACTS_PER_IMPORT} per import.`,
+    }, 400)
+  }
+
   let imported = 0
   let skipped = 0
   const importErrors: string[] = [...errors]
