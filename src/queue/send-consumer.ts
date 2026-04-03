@@ -1,5 +1,6 @@
 import { Env, SendMessage, AgentSendMessage, Campaign, CampaignContact, CampaignStep } from '../types'
 import { generateEmail } from '../llm/generate'
+import { createProvider } from '../llm/provider'
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
 import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
 import { buildHtmlBody } from '../tracking/links'
@@ -390,7 +391,7 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     return
   }
 
-  const { subject, body } = await generateEmail(env, campaign, contact, step_number)
+  const { subject, body } = await generateEmail(createProvider(env), campaign, contact, step_number)
 
   const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)

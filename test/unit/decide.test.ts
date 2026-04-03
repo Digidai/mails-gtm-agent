@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { makeDecision } from '../../src/agent/decide'
 import { Env, Campaign, CampaignContact, Event, KnowledgeBase } from '../../src/types'
+import { createProvider } from '../../src/llm/provider'
 
 const originalFetch = globalThis.fetch
 
@@ -114,6 +115,7 @@ describe('Agent Decision Engine', () => {
   test('returns stop for terminal status contact', async () => {
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact({ status: 'converted' }),
       [],
@@ -126,6 +128,7 @@ describe('Agent Decision Engine', () => {
   test('returns stop when max_emails reached', async () => {
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign({ max_emails: 3 }),
       mockContact({ emails_sent: 3 }),
       [],
@@ -139,6 +142,7 @@ describe('Agent Decision Engine', () => {
     const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign({ min_interval_days: 2 }),
       mockContact({ last_sent_at: oneHourAgo }),
       [],
@@ -167,6 +171,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact(),
       [],
@@ -193,6 +198,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact({ emails_sent: 1 }),
       [],
@@ -208,6 +214,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact(),
       [],
@@ -229,6 +236,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact(),
       [],
@@ -250,6 +258,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact(),
       [],
@@ -274,6 +283,7 @@ describe('Agent Decision Engine', () => {
 
     const result = await makeDecision(
       mockEnv(),
+      createProvider(mockEnv()),
       mockCampaign(),
       mockContact({ emails_sent: 1 }),
       [],

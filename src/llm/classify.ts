@@ -1,5 +1,6 @@
-import { Env, ClassifyResult, IntentType } from '../types'
-import { callLLM, extractJson } from './openrouter'
+import { ClassifyResult, IntentType } from '../types'
+import { extractJson } from './openrouter'
+import { LLMProvider } from './provider'
 
 const SYSTEM_PROMPT = `Classify the intent of this email reply. Return ONLY valid JSON:
 { "intent": "interested|not_now|not_interested|wrong_person|out_of_office|unsubscribe|auto_reply|do_not_contact|unclear", "confidence": 0.0-1.0, "resume_date": "YYYY-MM-DD or null" }
@@ -23,7 +24,7 @@ const VALID_INTENTS: IntentType[] = [
   'out_of_office', 'unsubscribe', 'auto_reply', 'do_not_contact', 'unclear',
 ]
 
-export async function classifyReply(env: Env, replyText: string): Promise<ClassifyResult> {
+export async function classifyReply(provider: LLMProvider, replyText: string): Promise<ClassifyResult> {
   try {
     // Truncate reply to prevent token abuse; 2000 chars is more than enough for intent classification
     let truncated = replyText.slice(0, 2000)
@@ -32,7 +33,7 @@ export async function classifyReply(env: Env, replyText: string): Promise<Classi
     // Strip HTML/script tags
     truncated = truncated.replace(/<[^>]*>/g, '')
     const userPrompt = `The reply:\n${truncated}`
-    const raw = await callLLM(env, SYSTEM_PROMPT, userPrompt)
+    const raw = await provider.call(SYSTEM_PROMPT, userPrompt)
 
     // Extract JSON from response
     const jsonStr = extractJson(raw)

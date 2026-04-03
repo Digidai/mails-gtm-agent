@@ -2,6 +2,7 @@ import { Env, Campaign, CampaignContact, IntentType, KnowledgeBase } from '../ty
 import { classifyReply } from '../llm/classify'
 import { generateReply } from '../llm/reply'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
+import { createProvider, LLMProvider } from '../llm/provider'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
@@ -58,6 +59,8 @@ export async function replyCron(env: Env): Promise<void> {
 }
 
 async function _replyCron(env: Env): Promise<void> {
+  const provider = createProvider(env)
+
   // Use a global KV-style marker stored in an arbitrary active campaign,
   // or fall back to the most recent last_inbox_check_at across all campaigns.
   const sinceRow = await env.DB.prepare(
@@ -263,7 +266,7 @@ async function _replyCron(env: Env): Promise<void> {
       }
 
       // Classify the reply once
-      classification = await classifyReply(env, replyText)
+      classification = await classifyReply(provider, replyText)
       effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
     }
 
@@ -307,7 +310,7 @@ async function _replyCron(env: Env): Promise<void> {
 
         // Execute action based on intent (skip if duplicate content to avoid double-processing)
         if (!isDuplicateContent) {
-          await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
+          await handleIntent(env, provider, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
         }
       } catch (err) {
         console.error(`Reply processing error for contact ${contact.id}:`, err)
@@ -359,6 +362,7 @@ export function canAutoReply(
 
 async function handleIntent(
   env: Env,
+  provider: LLMProvider,
   campaign: Campaign,
   contact: CampaignContact,
   intent: IntentType,
@@ -487,7 +491,7 @@ async function handleIntent(
   // v2.1: Generate and send auto-reply for agent engine
   if (shouldReply) {
     try {
-      await processAutoReply(env, campaign, contact, replyText, intent, originalMsg)
+      await processAutoReply(env, provider, campaign, contact, replyText, intent, originalMsg)
     } catch (err) {
       console.error(`[reply-cron] Auto-reply failed for contact ${contact.id}:`, err)
     }
@@ -499,6 +503,7 @@ async function handleIntent(
  */
 async function processAutoReply(
   env: Env,
+  provider: LLMProvider,
   campaign: Campaign,
   contact: CampaignContact,
   replyText: string,
@@ -563,7 +568,7 @@ async function processAutoReply(
   }
 
   // Generate reply
-  const result = await generateReply(env, campaign, contact, replyText, history, intent, kb)
+  const result = await generateReply(provider, campaign, contact, replyText, history, intent, kb)
 
   if (result.should_stop) {
     // Contact wants to stop or talk to a human
@@ -581,7 +586,7 @@ async function processAutoReply(
   if (await claimLlmQuota(env, campaign.id)) {
     try {
       const reviewResult = await reviewEmail(
-        env,
+        provider,
         kb,
         `Re: ${originalMsg.subject || 'Follow up'}`,
         result.reply,
