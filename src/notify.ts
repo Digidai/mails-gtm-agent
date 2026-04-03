@@ -4,6 +4,42 @@ import { mailsFetch } from './mails-api'
 type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error' | 'knowledge_gap' | 'conversation_stopped'
 
 /**
+ * Fire an outgoing webhook callback if the campaign has a webhook_callback_url configured.
+ * Best-effort: failures are logged but never block the main flow.
+ */
+async function fireCallbackWebhook(
+  campaign: Campaign,
+  type: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const url = (campaign as any).webhook_callback_url
+  if (!url) return
+
+  try {
+    const payload = JSON.stringify({
+      event: type,
+      campaign_id: campaign.id,
+      campaign_name: campaign.name,
+      timestamp: new Date().toISOString(),
+      data,
+    })
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+
+    if (!res.ok) {
+      console.error(`[webhook-callback] POST to ${url} failed: ${res.status}`)
+    }
+  } catch (err) {
+    // Webhook failure should never block the main flow
+    console.error(`[webhook-callback] Error posting to ${url}:`, err)
+  }
+}
+
+/**
  * Send a notification email to the campaign owner (campaign.from_email / mailbox).
  */
 export async function notifyOwner(
@@ -106,4 +142,9 @@ export async function notifyOwner(
     // Notification failure is not critical — log and continue
     console.error('Failed to send notification:', err)
   }
+
+  // Fire outgoing webhook if configured
+  try {
+    await fireCallbackWebhook(campaign, type, data)
+  } catch { /* best-effort */ }
 }

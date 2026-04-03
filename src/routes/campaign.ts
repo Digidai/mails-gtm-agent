@@ -152,8 +152,8 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
       id, name, product_name, product_description, from_email, physical_address,
       ai_generate, warmup_enabled, warmup_start_volume, warmup_increment, steps,
       engine, product_url, conversion_url, knowledge_base, knowledge_base_status,
-      max_emails, min_interval_days, webhook_secret, dry_run
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      max_emails, min_interval_days, webhook_secret, dry_run, webhook_callback_url
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     body.name,
@@ -175,6 +175,7 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     body.min_interval_days || 2,
     webhookSecret,
     body.dry_run ? 1 : 0,
+    body.webhook_callback_url || null,
   ).run()
 
   // If product_url is provided, try to generate knowledge base asynchronously
