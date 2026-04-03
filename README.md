@@ -12,6 +12,10 @@ Built on top of [mails-agent](https://github.com/Digidai/mails) for email delive
 - **Warmup Scheduling** -- Gradually ramp up sending volume to protect sender reputation
 - **CAN-SPAM / GDPR Compliance** -- Automatic List-Unsubscribe headers, physical address footer, one-click unsubscribe, and GDPR data deletion
 - **CSV Import** -- Bulk import contacts with custom fields
+- **Self-Learning Agent** -- Learns from reply patterns, adapts messaging strategy over time
+- **Daily Summary** -- Automated digest of campaign performance, replies, and actions taken
+- **MCP Server** -- Manage campaigns directly from Claude Code, Cursor, or Windsurf
+- **Reviewer Agent** -- AI pre-review checks email quality and accuracy before sending
 - **Serverless** -- Zero infrastructure to manage, runs entirely on Cloudflare Workers + D1 + Queues
 
 ## Architecture
@@ -19,6 +23,8 @@ Built on top of [mails-agent](https://github.com/Digidai/mails) for email delive
 ```
 Cron (1min) ──> send-cron ──> Queue ──> send-consumer ──> mails-agent API
 Cron (5min) ──> reply-cron ──> mails-agent inbox ──> LLM classify ──> update status
+Cron (1hr)  ──> agent-cron ──> self-learning ──> adapt strategy
+Cron (daily)──> summary-cron ──> generate daily digest ──> notify
 ```
 
 | Component | Technology |
@@ -220,6 +226,44 @@ curl -X POST https://your-worker.workers.dev/api/gdpr/delete \
 | GDPR Data Deletion | Yes | Limited | Limited | Limited |
 | Bring Your Own LLM | Yes | No | No | No |
 | Price | Free | $30+/mo | $39+/mo | $49+/mo |
+
+## MCP Server
+
+Manage campaigns from any MCP-compatible AI assistant:
+
+```bash
+MAILS_GTM_URL=https://your-worker.workers.dev MAILS_GTM_TOKEN=your-token bun mcp/index.ts
+```
+
+Claude Desktop config (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "mails-gtm": {
+      "command": "bun",
+      "args": ["/path/to/mails-gtm-agent/mcp/index.ts"],
+      "env": {
+        "MAILS_GTM_URL": "https://your-worker.workers.dev",
+        "MAILS_GTM_TOKEN": "your-admin-token"
+      }
+    }
+  }
+}
+```
+
+## CLI
+
+```bash
+# Create and run a campaign
+mails-gtm campaign create --name "Q1 Outreach" --engine agent
+mails-gtm contacts import <campaign-id> --csv contacts.csv
+mails-gtm campaign start <campaign-id>
+
+# Monitor
+mails-gtm campaign stats <campaign-id>
+mails-gtm campaign events <campaign-id>
+mails-gtm campaign decisions <campaign-id>
+```
 
 ## License
 
