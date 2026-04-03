@@ -9,7 +9,8 @@ import { recordContactMessage, recordAgentMessage, getConversationHistory } from
 import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
 import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
-import { TERMINAL_STATUSES } from '../queue/send-consumer'
+import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
+import { claimLlmQuota } from '../utils/llm-quota'
 
 /**
  * Auto-responder header patterns — more reliable than LLM classification
@@ -36,26 +37,7 @@ export function isAutoResponder(headers: Record<string, string> | undefined | nu
   return false
 }
 
-/**
- * Atomically claim an LLM quota slot for a campaign.
- * Returns true if a slot was successfully claimed, false if the limit is reached.
- * Resets the daily counter if daily_llm_reset_at is stale (before today).
- */
-async function claimLlmQuota(env: Env, campaignId: string): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10)
-
-  // First, try to reset if the reset date is stale (before today)
-  await env.DB.prepare(
-    "UPDATE campaigns SET daily_llm_calls = 0, daily_llm_reset_at = ? WHERE id = ? AND (daily_llm_reset_at IS NULL OR daily_llm_reset_at < ?)"
-  ).bind(today, campaignId, today).run()
-
-  // Atomically claim a slot
-  const result = await env.DB.prepare(
-    "UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ? AND daily_llm_calls < daily_llm_limit"
-  ).bind(campaignId).run()
-
-  return !!(result.meta?.changes)
-}
+// claimLlmQuota extracted to src/utils/llm-quota.ts (shared with evaluate-consumer)
 
 /**
  * Reply cron — runs globally once (not per-campaign).
@@ -395,17 +377,13 @@ async function handleIntent(
   switch (intent) {
     case 'interested':
       if (isAgentEngine) {
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'interested', reply_intent = ?, reply_confidence = ?, next_check_at = NULL, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'interested', {
+          reply_intent: intent, reply_confidence: confidence, next_check_at: null,
+        })
       } else {
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'interested', {
+          reply_intent: intent, reply_confidence: confidence,
+        })
       }
 
       // Send notification (v1 + v2 both notify on interested reply)
@@ -420,45 +398,37 @@ async function handleIntent(
 
     case 'not_now': {
       const resume = resumeDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = 'not_now', reply_intent = ?, reply_confidence = ?, resume_at = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, resume, now, contact.id).run()
+      await updateContactStatus(env.DB, contact.id, 'not_now', {
+        reply_intent: intent, reply_confidence: confidence, resume_at: resume,
+      })
       break
     }
 
     case 'not_interested':
       if (isAgentEngine) {
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'stopped', reply_intent = ?, reply_confidence = ?, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'stopped', {
+          reply_intent: intent, reply_confidence: confidence,
+        })
       } else {
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'not_interested', reply_intent = ?, reply_confidence = ?, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'not_interested', {
+          reply_intent: intent, reply_confidence: confidence,
+        })
       }
       break
 
     case 'wrong_person':
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = 'wrong_person', reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      await updateContactStatus(env.DB, contact.id, 'wrong_person', {
+        reply_intent: intent, reply_confidence: confidence,
+      })
       break
 
     case 'unsubscribe':
     case 'do_not_contact':
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET status = ${isAgentEngine ? "'unsubscribed'" : "'do_not_contact'"}, reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      await updateContactStatus(
+        env.DB, contact.id,
+        isAgentEngine ? 'unsubscribed' : 'do_not_contact',
+        { reply_intent: intent, reply_confidence: confidence },
+      )
 
       // Campaign-specific unsubscribe record
       await env.DB.prepare(`
@@ -493,28 +463,23 @@ async function handleIntent(
 
     case 'out_of_office':
     case 'auto_reply':
-      await env.DB.prepare(`
-        UPDATE campaign_contacts
-        SET reply_intent = ?, reply_confidence = ?, updated_at = ?
-        WHERE id = ?
-      `).bind(intent, confidence, now, contact.id).run()
+      // No status change — just record classification metadata
+      await env.DB.prepare(
+        "UPDATE campaign_contacts SET reply_intent = ?, reply_confidence = ?, updated_at = datetime('now') WHERE id = ?",
+      ).bind(intent, confidence, contact.id).run()
       break
 
     case 'unclear':
     default:
       if (isAgentEngine) {
         // v2: set to active so agent can decide
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'active', reply_intent = ?, reply_confidence = ?, next_check_at = NULL, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'active', {
+          reply_intent: intent, reply_confidence: confidence, next_check_at: null,
+        })
       } else {
-        await env.DB.prepare(`
-          UPDATE campaign_contacts
-          SET status = 'replied', reply_intent = ?, reply_confidence = ?, updated_at = ?
-          WHERE id = ?
-        `).bind(intent, confidence, now, contact.id).run()
+        await updateContactStatus(env.DB, contact.id, 'replied', {
+          reply_intent: intent, reply_confidence: confidence,
+        })
       }
       break
   }
@@ -828,9 +793,7 @@ async function sendFinalMessage(
   // NOTE: auto_reply_count is NOT incremented here because it was already
   // atomically incremented in processAutoReply() before calling this function.
   // Double-incrementing was a bug that inflated the counter.
-  await env.DB.prepare(
-    "UPDATE campaign_contacts SET status = 'stopped', updated_at = datetime('now') WHERE id = ?"
-  ).bind(contact.id).run()
+  await updateContactStatus(env.DB, contact.id, 'stopped')
 }
 
 function extractEmail(str: string): string | null {
