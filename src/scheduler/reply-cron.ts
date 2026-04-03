@@ -38,7 +38,7 @@ export function isAutoResponder(headers: Record<string, string> | undefined | nu
   return false
 }
 
-// claimLlmQuota extracted to src/utils/llm-quota.ts (shared with evaluate-consumer)
+// claimLlmQuota extracted to src/utils/llm-quota.ts (shared with evaluate-consumer and inbound-webhook)
 
 /**
  * Reply cron — runs globally once (not per-campaign).
@@ -47,6 +47,10 @@ export function isAutoResponder(headers: Record<string, string> | undefined | nu
  *
  * v2.1: After classifying intent, generates contextual auto-replies
  * using conversation history and knowledge base.
+ *
+ * FALLBACK MODE: This cron now serves as a safety net for messages missed by
+ * the /webhook/inbound endpoint. The webhook handler processes replies in real-time;
+ * this cron catches any that slip through (webhook delivery failure, etc.)
  */
 export async function replyCron(env: Env): Promise<void> {
   console.log(`[reply-cron] Starting reply check... binding=${!!env.MAILS_WORKER}`)
@@ -360,7 +364,7 @@ export function canAutoReply(
   return true
 }
 
-async function handleIntent(
+export async function handleIntent(
   env: Env,
   provider: LLMProvider,
   campaign: Campaign,
@@ -507,7 +511,7 @@ async function handleIntent(
 /**
  * v2.1: Generate a contextual reply and send it.
  */
-async function processAutoReply(
+export async function processAutoReply(
   env: Env,
   provider: LLMProvider,
   campaign: Campaign,
@@ -668,7 +672,7 @@ async function processAutoReply(
 /**
  * Send an auto-reply with threading headers and compliance.
  */
-async function sendAutoReply(
+export async function sendAutoReply(
   env: Env,
   campaign: Campaign,
   contact: CampaignContact,
@@ -769,7 +773,7 @@ async function sendAutoReply(
 /**
  * Send a final "goodbye" message and mark the contact as stopped.
  */
-async function sendFinalMessage(
+export async function sendFinalMessage(
   env: Env,
   campaign: Campaign,
   contact: CampaignContact,
@@ -807,7 +811,7 @@ async function sendFinalMessage(
   await updateContactStatus(env.DB, contact.id, 'stopped')
 }
 
-function extractEmail(str: string): string | null {
+export function extractEmail(str: string): string | null {
   const match = str.match(/([^\s<>]+@[^\s<>]+\.[^\s<>]+)/)
   return match ? match[1].toLowerCase() : null
 }
