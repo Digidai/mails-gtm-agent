@@ -11,7 +11,8 @@ import { makeDecision } from '../agent/decide'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
-import { TERMINAL_STATUSES } from './send-consumer'
+import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
+import { claimLlmQuota } from '../utils/llm-quota'
 
 /**
  * Evaluate-consumer: processes evaluate-queue messages.
@@ -73,8 +74,8 @@ async function processEvaluateMessage(
 
   if (!campaign || campaign.status !== 'active') return
 
-  // 2. Check daily LLM limit
-  if (campaign.daily_llm_calls >= campaign.daily_llm_limit) {
+  // 2. Atomically claim LLM quota slot (fixes concurrency race vs non-atomic read-then-increment)
+  if (!await claimLlmQuota(env, campaign_id)) {
     console.log(`Campaign ${campaign_id}: daily LLM limit reached, skipping contact ${contact_id}`)
     return
   }
@@ -116,12 +117,7 @@ async function processEvaluateMessage(
   // 6. Call Agent decision engine
   const decision = await makeDecision(env, campaign, contact, events, knowledgeBase)
 
-  // 7. Increment daily LLM calls only when LLM was actually called
-  if (decision.llm_called) {
-    await env.DB.prepare(
-      'UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ?',
-    ).bind(campaign_id).run()
-  }
+  // 7. LLM quota already atomically claimed in step 2 via claimLlmQuota()
 
   // 8. Record decision log
   const decisionId = crypto.randomUUID().replace(/-/g, '')
@@ -162,9 +158,7 @@ async function processEvaluateMessage(
         console.log(`Global daily send limit reached, deferring send for contact ${contact_id}`)
         // Treat as wait — re-evaluate tomorrow
         const nextCheck = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        await env.DB.prepare(
-          "UPDATE campaign_contacts SET status = 'active', next_check_at = ?, updated_at = datetime('now') WHERE id = ?",
-        ).bind(nextCheck, contact_id).run()
+        await updateContactStatus(env.DB, contact_id, 'active', { next_check_at: nextCheck })
         break
       }
 
@@ -201,13 +195,9 @@ async function processEvaluateMessage(
       let emailSubject = decision.email.subject
       let emailBody = decision.email.body
 
-      // Claim LLM quota for review (1 call)
-      if (campaign.daily_llm_calls < campaign.daily_llm_limit) {
+      // Claim LLM quota for review (1 call) — atomic via claimLlmQuota
+      if (await claimLlmQuota(env, campaign_id)) {
         try {
-          await env.DB.prepare(
-            'UPDATE campaigns SET daily_llm_calls = daily_llm_calls + 1 WHERE id = ?',
-          ).bind(campaign_id).run()
-
           const reviewResult = await reviewEmail(
             env,
             knowledgeBase,
@@ -261,9 +251,7 @@ async function processEvaluateMessage(
       // If DB update fails, we don't enqueue (preventing duplicate evaluation).
       // If enqueue fails after DB update, the contact is in 'active' status with
       // a stale next_check_at, so the next cron cycle will re-enqueue it.
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'active', next_check_at = NULL, updated_at = datetime('now') WHERE id = ?",
-      ).bind(contact_id).run()
+      await updateContactStatus(env.DB, contact_id, 'active', { next_check_at: null })
 
       // Enqueue to send queue (body = plain text with original URLs, htmlBody = tracked <a> tags)
       const sendMessage: AgentSendMessage = {
@@ -286,16 +274,12 @@ async function processEvaluateMessage(
     case 'wait': {
       const waitDays = decision.wait_days || 3
       const nextCheck = new Date(Date.now() + waitDays * 24 * 60 * 60 * 1000).toISOString()
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'active', next_check_at = ?, updated_at = datetime('now') WHERE id = ?",
-      ).bind(nextCheck, contact_id).run()
+      await updateContactStatus(env.DB, contact_id, 'active', { next_check_at: nextCheck })
       break
     }
 
     case 'stop': {
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'stopped', updated_at = datetime('now') WHERE id = ?",
-      ).bind(contact_id).run()
+      await updateContactStatus(env.DB, contact_id, 'stopped')
       break
     }
   }
