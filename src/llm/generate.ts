@@ -1,5 +1,6 @@
-import { Env, GenerateResult, CampaignContact, Campaign, CampaignStep } from '../types'
-import { callLLM, extractJson } from './openrouter'
+import { GenerateResult, CampaignContact, Campaign, CampaignStep } from '../types'
+import { extractJson } from './openrouter'
+import { LLMProvider } from './provider'
 
 /**
  * Sanitize user-provided data before embedding in LLM prompt.
@@ -66,7 +67,7 @@ export function applyTemplate(template: string, contact: CampaignContact): strin
 }
 
 export async function generateEmail(
-  env: Env,
+  provider: LLMProvider,
   campaign: Campaign,
   contact: CampaignContact,
   stepNumber: number
@@ -79,7 +80,7 @@ export async function generateEmail(
     try {
       const systemPrompt = buildSystemPrompt(campaign, contact)
       const userPrompt = buildUserPrompt(step, stepNumber)
-      const raw = await callLLM(env, systemPrompt, userPrompt)
+      const raw = await provider.call(systemPrompt, userPrompt)
 
       // Extract JSON from response (balanced brace extraction)
       const jsonStr = extractJson(raw)

@@ -1,5 +1,6 @@
-import { Env, KnowledgeBase } from '../types'
-import { callLLM, extractJson } from '../llm/openrouter'
+import { KnowledgeBase } from '../types'
+import { extractJson } from '../llm/openrouter'
+import { LLMProvider } from '../llm/provider'
 
 const EXTRACT_SYSTEM_PROMPT = `Extract product information from this markdown content.
 Return ONLY valid JSON:
@@ -23,7 +24,7 @@ Return ONLY valid JSON:
  */
 export async function generateKnowledgeBase(
   productUrl: string,
-  env: Env,
+  provider: LLMProvider,
 ): Promise<KnowledgeBase> {
   // Auto-prepend https:// if no protocol is specified
   if (!/^https?:\/\//i.test(productUrl)) {
@@ -88,7 +89,7 @@ export async function generateKnowledgeBase(
   }
 
   // 2. Use LLM to extract structured knowledge (limit to 15k chars to control token cost)
-  const raw = await callLLM(env, EXTRACT_SYSTEM_PROMPT, markdown.slice(0, 15000))
+  const raw = await provider.call(EXTRACT_SYSTEM_PROMPT, markdown.slice(0, 15000))
 
   // Parse JSON from LLM response (balanced brace extraction)
   const jsonStr = extractJson(raw)

@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { truncateKnowledgeBase } from '../../src/knowledge/generate'
 import { KnowledgeBase } from '../../src/types'
+import { createProvider } from '../../src/llm/provider'
 
 const originalFetch = globalThis.fetch
 
@@ -77,7 +78,7 @@ describe('Knowledge Base - generateKnowledgeBase', () => {
       OPENROUTER_API_KEY: 'test-key',
     } as any
 
-    const kb = await generateKnowledgeBase('https://testproduct.com', env)
+    const kb = await generateKnowledgeBase('https://testproduct.com', createProvider(env))
     expect(kb.product_name).toBe('TestProduct')
     expect(kb.features).toContain('fast')
     expect(fetchCalls).toBe(2) // md.genedai.me + LLM
@@ -89,7 +90,7 @@ describe('Knowledge Base - generateKnowledgeBase', () => {
     const { generateKnowledgeBase } = await import('../../src/knowledge/generate')
     const env = { OPENROUTER_API_KEY: 'test-key' } as any
 
-    await expect(generateKnowledgeBase('https://empty.com', env)).rejects.toThrow('insufficient content')
+    await expect(generateKnowledgeBase('https://empty.com', createProvider(env))).rejects.toThrow('insufficient content')
   })
 
   test('throws on fetch failure', async () => {
@@ -98,6 +99,6 @@ describe('Knowledge Base - generateKnowledgeBase', () => {
     const { generateKnowledgeBase } = await import('../../src/knowledge/generate')
     const env = { OPENROUTER_API_KEY: 'test-key' } as any
 
-    await expect(generateKnowledgeBase('https://404.com', env)).rejects.toThrow('Failed to fetch')
+    await expect(generateKnowledgeBase('https://404.com', createProvider(env))).rejects.toThrow('Failed to fetch')
   })
 })

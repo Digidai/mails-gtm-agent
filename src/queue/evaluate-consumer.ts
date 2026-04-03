@@ -11,6 +11,7 @@ import { makeDecision } from '../agent/decide'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
+import { createProvider } from '../llm/provider'
 import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
 import { claimLlmQuota } from '../utils/llm-quota'
 
@@ -65,6 +66,7 @@ async function processEvaluateMessage(
   message: EvaluateMessage,
   env: Env,
 ): Promise<void> {
+  const provider = createProvider(env)
   const { campaign_id, contact_id } = message
 
   // 1. Fetch campaign
@@ -115,7 +117,7 @@ async function processEvaluateMessage(
   }
 
   // 6. Call Agent decision engine
-  const decision = await makeDecision(env, campaign, contact, events, knowledgeBase)
+  const decision = await makeDecision(env, provider, campaign, contact, events, knowledgeBase)
 
   // 7. LLM quota already atomically claimed in step 2 via claimLlmQuota()
 
@@ -199,7 +201,7 @@ async function processEvaluateMessage(
       if (await claimLlmQuota(env, campaign_id)) {
         try {
           const reviewResult = await reviewEmail(
-            env,
+            provider,
             knowledgeBase,
             emailSubject,
             emailBody,

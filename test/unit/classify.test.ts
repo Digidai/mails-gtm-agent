@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
 import { classifyReply } from '../../src/llm/classify'
 import { Env, IntentType } from '../../src/types'
+import { createProvider, LLMProvider } from '../../src/llm/provider'
 
 // Mock fetch globally
 const originalFetch = globalThis.fetch
@@ -42,7 +43,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('interested', 0.95)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "Yes, I'd love to learn more! Can we schedule a call?")
+    const result = await classifyReply(createProvider(mockEnv()), "Yes, I'd love to learn more! Can we schedule a call?")
     expect(result.intent).toBe('interested')
     expect(result.confidence).toBe(0.95)
   })
@@ -52,7 +53,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('not_now', 0.85, '2026-04-15')
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "Interesting but we're in the middle of Q1 planning. Can you reach out in April?")
+    const result = await classifyReply(createProvider(mockEnv()), "Interesting but we're in the middle of Q1 planning. Can you reach out in April?")
     expect(result.intent).toBe('not_now')
     expect(result.resume_date).toBe('2026-04-15')
   })
@@ -62,7 +63,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('not_interested', 0.9)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "Thanks but we're not looking for this kind of solution.")
+    const result = await classifyReply(createProvider(mockEnv()), "Thanks but we're not looking for this kind of solution.")
     expect(result.intent).toBe('not_interested')
   })
 
@@ -71,7 +72,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('wrong_person', 0.8)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "I'm not the right person. You should contact John in procurement.")
+    const result = await classifyReply(createProvider(mockEnv()), "I'm not the right person. You should contact John in procurement.")
     expect(result.intent).toBe('wrong_person')
   })
 
@@ -80,7 +81,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('out_of_office', 0.95)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "I'm out of office until March 30. I'll respond when I return.")
+    const result = await classifyReply(createProvider(mockEnv()), "I'm out of office until March 30. I'll respond when I return.")
     expect(result.intent).toBe('out_of_office')
   })
 
@@ -89,7 +90,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('unsubscribe', 0.95)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "Please remove me from your mailing list.")
+    const result = await classifyReply(createProvider(mockEnv()), "Please remove me from your mailing list.")
     expect(result.intent).toBe('unsubscribe')
   })
 
@@ -98,7 +99,7 @@ describe('Reply Classifier', () => {
       mockLLMResponse('auto_reply', 0.9)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "This is an automated response. Your email has been received.")
+    const result = await classifyReply(createProvider(mockEnv()), "This is an automated response. Your email has been received.")
     expect(result.intent).toBe('auto_reply')
   })
 
@@ -107,14 +108,14 @@ describe('Reply Classifier', () => {
       mockLLMResponse('do_not_contact', 0.95)
     ))) as any
 
-    const result = await classifyReply(mockEnv(), "Stop emailing me or I will report this as spam.")
+    const result = await classifyReply(createProvider(mockEnv()), "Stop emailing me or I will report this as spam.")
     expect(result.intent).toBe('do_not_contact')
   })
 
   test('falls back to unclear on LLM failure', async () => {
     globalThis.fetch = (async () => new Response('Server Error', { status: 500 })) as any
 
-    const result = await classifyReply(mockEnv(), "Some reply text")
+    const result = await classifyReply(createProvider(mockEnv()), "Some reply text")
     expect(result.intent).toBe('unclear')
     expect(result.confidence).toBe(0)
   })
@@ -124,7 +125,7 @@ describe('Reply Classifier', () => {
       choices: [{ message: { content: 'not valid json at all' } }],
     }))) as any
 
-    const result = await classifyReply(mockEnv(), "Some reply text")
+    const result = await classifyReply(createProvider(mockEnv()), "Some reply text")
     expect(result.intent).toBe('unclear')
   })
 
@@ -133,7 +134,7 @@ describe('Reply Classifier', () => {
       choices: [{ message: { content: '```json\n{"intent": "interested", "confidence": 0.9, "resume_date": null}\n```' } }],
     }))) as any
 
-    const result = await classifyReply(mockEnv(), "Yes, I'd love to hear more")
+    const result = await classifyReply(createProvider(mockEnv()), "Yes, I'd love to hear more")
     expect(result.intent).toBe('interested')
   })
 })

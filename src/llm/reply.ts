@@ -1,5 +1,6 @@
-import { Env, Campaign, CampaignContact, ConversationMessage, IntentType, KnowledgeBase } from '../types'
-import { callLLM, extractJson } from './openrouter'
+import { Campaign, CampaignContact, ConversationMessage, IntentType, KnowledgeBase } from '../types'
+import { extractJson } from './openrouter'
+import { LLMProvider } from './provider'
 import { formatConversation } from '../conversations/context'
 
 export interface ReplyResult {
@@ -12,7 +13,7 @@ export interface ReplyResult {
  * Generate a contextual reply using conversation history, knowledge base, and intent.
  */
 export async function generateReply(
-  env: Env,
+  provider: LLMProvider,
   campaign: Campaign,
   contact: CampaignContact,
   latestReply: string,
@@ -77,7 +78,7 @@ ${sanitizedReply}
 ${intent}`
 
   try {
-    const raw = await callLLM(env, systemPrompt, userPrompt)
+    const raw = await provider.call(systemPrompt, userPrompt)
     const jsonStr = extractJson(raw)
 
     if (jsonStr) {
