@@ -525,6 +525,12 @@ async function handleIntent(
       await processAutoReply(env, campaign, contact, replyText, intent, originalMsg)
     } catch (err) {
       console.error(`[reply-cron] Auto-reply failed for contact ${contact.id}:`, err)
+      // Record wasted quota for debugging
+      try {
+        await recordEvent(env, campaign.id, contact.id, 'auto_reply_wasted', {
+          reason: (err as Error).message?.slice(0, 200) || 'Unknown error',
+        })
+      } catch { /* best-effort */ }
     }
   }
 }
