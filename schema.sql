@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   max_emails INTEGER NOT NULL DEFAULT 6,
   min_interval_days INTEGER NOT NULL DEFAULT 2,
   webhook_secret TEXT,
+  webhook_callback_url TEXT,
   dry_run INTEGER NOT NULL DEFAULT 0,
   daily_llm_calls INTEGER NOT NULL DEFAULT 0,
   daily_llm_limit INTEGER NOT NULL DEFAULT 100,

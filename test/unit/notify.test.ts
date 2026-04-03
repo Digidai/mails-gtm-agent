@@ -28,6 +28,7 @@ function mockCampaign(overrides: Partial<Campaign> = {}): Campaign {
     max_emails: 6,
     min_interval_days: 2,
     webhook_secret: null,
+    webhook_callback_url: null,
     dry_run: 0,
     daily_llm_calls: 0,
     daily_llm_limit: 100,
@@ -127,5 +128,83 @@ describe('Notify Owner', () => {
     await notifyOwner(mockEnv(), mockCampaign(), 'interested_reply', {
       contactEmail: 'alice@acme.com',
     })
+  })
+
+  test('fires webhook callback when campaign has webhook_callback_url', async () => {
+    const calls: { url: string; body: any }[] = []
+    globalThis.fetch = (async (url: string, opts?: any) => {
+      calls.push({ url, body: opts?.body ? JSON.parse(opts.body) : null })
+      return new Response(JSON.stringify({ id: 'msg-1' }))
+    }) as any
+
+    await notifyOwner(
+      mockEnv(),
+      mockCampaign({ webhook_callback_url: 'https://hooks.example.com/callback' }),
+      'interested_reply',
+      {
+        contactEmail: 'alice@acme.com',
+        contactName: 'Alice',
+        replyText: 'I am interested!',
+      },
+    )
+
+    // Should have 2 fetch calls: 1 email + 1 webhook
+    expect(calls.length).toBe(2)
+
+    // Second call should be the webhook
+    const webhookCall = calls[1]
+    expect(webhookCall.url).toBe('https://hooks.example.com/callback')
+    expect(webhookCall.body.event).toBe('interested_reply')
+    expect(webhookCall.body.campaign_id).toBe('campaign-1')
+    expect(webhookCall.body.data.contactEmail).toBe('alice@acme.com')
+  })
+
+  test('does not fire webhook when campaign has no webhook_callback_url', async () => {
+    const calls: string[] = []
+    globalThis.fetch = (async (url: string, opts?: any) => {
+      calls.push(url)
+      return new Response(JSON.stringify({ id: 'msg-1' }))
+    }) as any
+
+    await notifyOwner(
+      mockEnv(),
+      mockCampaign({ webhook_callback_url: null }),
+      'conversion',
+      {
+        contactEmail: 'alice@acme.com',
+        conversionType: 'signup',
+      },
+    )
+
+    // Only 1 fetch call (the email), no webhook
+    expect(calls.length).toBe(1)
+  })
+
+  test('webhook failure does not block email notification', async () => {
+    let emailSent = false
+    let callCount = 0
+    globalThis.fetch = (async (url: string, opts?: any) => {
+      callCount++
+      if (callCount === 1) {
+        // Email send succeeds
+        emailSent = true
+        return new Response(JSON.stringify({ id: 'msg-1' }))
+      }
+      // Webhook call fails
+      throw new Error('Webhook endpoint down')
+    }) as any
+
+    // Should not throw
+    await notifyOwner(
+      mockEnv(),
+      mockCampaign({ webhook_callback_url: 'https://hooks.example.com/broken' }),
+      'conversion',
+      {
+        contactEmail: 'alice@acme.com',
+        conversionType: 'payment',
+      },
+    )
+
+    expect(emailSent).toBe(true)
   })
 })
