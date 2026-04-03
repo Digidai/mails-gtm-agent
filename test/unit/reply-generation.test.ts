@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { generateReply } from '../../src/llm/reply'
 import { Env, Campaign, CampaignContact, ConversationMessage, KnowledgeBase } from '../../src/types'
+import { createProvider } from '../../src/llm/provider'
 
 const originalFetch = globalThis.fetch
 
@@ -112,7 +113,7 @@ describe('Reply Generation', () => {
     const kb: KnowledgeBase = { product_name: 'mails-agent', pricing: 'Free' }
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'How does this compare to AgentMail?', history, 'interested', kb,
     )
 
@@ -137,7 +138,7 @@ describe('Reply Generation', () => {
     }) as any
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Does mails-agent support IMAP?', [], 'interested', {},
     )
 
@@ -162,7 +163,7 @@ describe('Reply Generation', () => {
     }) as any
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Can I talk to a real person instead?', [], 'interested', {},
     )
 
@@ -175,7 +176,7 @@ describe('Reply Generation', () => {
     }) as any
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Tell me more', [], 'interested', {},
     )
 
@@ -197,7 +198,7 @@ describe('Reply Generation', () => {
     }) as any
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Tell me more', [], 'interested', {},
     )
 
@@ -229,7 +230,7 @@ describe('Reply Generation', () => {
     ]
 
     await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Can it replace Resend?', history, 'interested', { product_name: 'mails-agent' },
     )
 
@@ -258,7 +259,7 @@ describe('Reply Generation', () => {
     }) as any
 
     const result = await generateReply(
-      mockEnv(), mockCampaign(), mockContact(),
+      createProvider(mockEnv()), mockCampaign(), mockContact(),
       'Tell me more', [], 'interested', {},
     )
 

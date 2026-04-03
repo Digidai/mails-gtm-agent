@@ -1,5 +1,6 @@
 import { Env, Campaign, CampaignContact, Event, KnowledgeBase, AgentDecision } from '../types'
-import { callLLM, extractJson } from '../llm/openrouter'
+import { extractJson } from '../llm/openrouter'
+import { LLMProvider } from '../llm/provider'
 import { checkHardRules } from './rules'
 import { truncateKnowledgeBase } from '../knowledge/generate'
 
@@ -61,6 +62,7 @@ export interface AgentDecisionResult extends AgentDecision {
 
 export async function makeDecision(
   env: Env,
+  provider: LLMProvider,
   campaign: Campaign,
   contact: CampaignContact,
   events: Event[],
@@ -94,7 +96,7 @@ export async function makeDecision(
   const userPrompt = 'Based on the above context, make your decision. Return ONLY valid JSON.'
 
   try {
-    const raw = await callLLM(env, systemPrompt, userPrompt)
+    const raw = await provider.call(systemPrompt, userPrompt)
 
     // Extract JSON from response (balanced brace extraction)
     const jsonStr = extractJson(raw)

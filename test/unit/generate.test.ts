@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { generateEmail, applyTemplate } from '../../src/llm/generate'
 import { Env, Campaign, CampaignContact } from '../../src/types'
+import { createProvider } from '../../src/llm/provider'
 
 const originalFetch = globalThis.fetch
 
@@ -106,7 +107,7 @@ describe('Email Generator', () => {
       }],
     }))) as any
 
-    const result = await generateEmail(mockEnv(), mockCampaign(), mockContact(), 0)
+    const result = await generateEmail(createProvider(mockEnv()), mockCampaign(), mockContact(), 0)
     expect(result.subject).toContain('Acme')
     expect(result.body).toContain('Alice')
   })
@@ -114,7 +115,7 @@ describe('Email Generator', () => {
   test('falls back to template on LLM failure', async () => {
     globalThis.fetch = (async () => new Response('Error', { status: 500 })) as any
 
-    const result = await generateEmail(mockEnv(), mockCampaign(), mockContact(), 0)
+    const result = await generateEmail(createProvider(mockEnv()), mockCampaign(), mockContact(), 0)
     expect(result.subject).toBe('Hello Alice')
     expect(result.body).toContain('Alice')
     expect(result.body).toContain('Acme Inc')
@@ -122,7 +123,7 @@ describe('Email Generator', () => {
 
   test('uses template directly when ai_generate is false', async () => {
     const campaign = mockCampaign({ ai_generate: 0 })
-    const result = await generateEmail(mockEnv(), campaign, mockContact(), 0)
+    const result = await generateEmail(createProvider(mockEnv()), campaign, mockContact(), 0)
     expect(result.subject).toBe('Hello Alice')
     expect(result.body).toContain('Acme Inc')
   })
@@ -132,7 +133,7 @@ describe('Email Generator', () => {
 
     globalThis.fetch = (async () => new Response('Error', { status: 500 })) as any
 
-    const result = await generateEmail(mockEnv(), campaign, mockContact(), 0)
+    const result = await generateEmail(createProvider(mockEnv()), campaign, mockContact(), 0)
     expect(result.subject).toContain('SuperSaaS')
     expect(result.body).toContain('Alice')
   })
@@ -146,7 +147,7 @@ describe('Email Generator', () => {
       }],
     }))) as any
 
-    const result = await generateEmail(mockEnv(), mockCampaign(), mockContact(), 0)
+    const result = await generateEmail(createProvider(mockEnv()), mockCampaign(), mockContact(), 0)
     expect(result.subject).toBe('Test Subject')
     expect(result.body).toBe('Test Body')
   })

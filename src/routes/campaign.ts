@@ -1,5 +1,6 @@
 import { Env, Campaign, CampaignStep, KnowledgeBase } from '../types'
 import { generateKnowledgeBase } from '../knowledge/generate'
+import { createProvider } from '../llm/provider'
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -183,7 +184,7 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
         "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
       ).bind(id).run()
 
-      const kb = await generateKnowledgeBase(body.product_url, env)
+      const kb = await generateKnowledgeBase(body.product_url, createProvider(env))
 
       await env.DB.prepare(
         "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready' WHERE id = ?",
@@ -414,7 +415,7 @@ async function refreshKnowledge(id: string, env: Env): Promise<Response> {
       "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
     ).bind(id).run()
 
-    const kb = await generateKnowledgeBase(campaign.product_url, env)
+    const kb = await generateKnowledgeBase(campaign.product_url, createProvider(env))
 
     await env.DB.prepare(
       "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready', updated_at = datetime('now') WHERE id = ?",

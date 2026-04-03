@@ -1,5 +1,6 @@
-import { Env, KnowledgeBase } from '../types'
-import { callLLM, extractJson } from './openrouter'
+import { KnowledgeBase } from '../types'
+import { extractJson } from './openrouter'
+import { LLMProvider } from './provider'
 import { truncateKnowledgeBase } from '../knowledge/generate'
 
 export interface ReviewResult {
@@ -16,7 +17,7 @@ export interface ReviewResult {
  * On LLM failure, defaults to approved (don't block sends).
  */
 export async function reviewEmail(
-  env: Env,
+  provider: LLMProvider,
   knowledgeBase: KnowledgeBase,
   subject: string,
   body: string,
@@ -55,7 +56,7 @@ Body:
 ${body}`
 
   try {
-    const raw = await callLLM(env, systemPrompt, userPrompt)
+    const raw = await provider.call(systemPrompt, userPrompt)
     const jsonStr = extractJson(raw)
 
     if (jsonStr) {
