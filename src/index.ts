@@ -13,6 +13,7 @@ import { summaryCron } from './scheduler/summary-cron'
 import { sendConsumer } from './queue/send-consumer'
 import { evaluateConsumer } from './queue/evaluate-consumer'
 import { handleWebhookEvent } from './events/webhook'
+import { handleInboundWebhook } from './routes/inbound-webhook'
 import { recordEvent } from './events/record'
 
 const CORS_HEADERS: Record<string, string> = {
@@ -109,6 +110,12 @@ export default {
     const webhookMatch = path.match(/^\/webhook\/event\/([a-f0-9]+)$/)
     if (webhookMatch && request.method === 'POST') {
       return handleWebhookEvent(request, webhookMatch[1], env)
+    }
+
+    // Inbound email webhook: POST /webhook/inbound
+    const inboundMatch = path.match(/^\/webhook\/inbound$/)
+    if (inboundMatch && request.method === 'POST') {
+      return handleInboundWebhook(request, env)
     }
 
     // ===== AUTHENTICATED API ENDPOINTS =====
