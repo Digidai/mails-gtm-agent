@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
 import { reviewEmail, buildSafeEmail, ReviewResult } from '../../src/llm/review'
 import { Env, KnowledgeBase } from '../../src/types'
+import { createProvider } from '../../src/llm/provider'
 
 const originalFetch = globalThis.fetch
 
@@ -55,7 +56,7 @@ describe('reviewEmail', () => {
     ))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Introducing mails-agent',
       'Hi John, mails-agent is a CLI tool for email automation. Try it at https://mails-agent.dev',
@@ -80,7 +81,7 @@ describe('reviewEmail', () => {
     ))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Introducing mails-agent',
       'Hi John, mails-agent is a code review platform that helps teams review PRs faster.',
@@ -102,7 +103,7 @@ describe('reviewEmail', () => {
     ))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Amazing AI Platform',
       'Hi John, our revolutionary blockchain-powered AI platform transforms your business.',
@@ -119,7 +120,7 @@ describe('reviewEmail', () => {
     globalThis.fetch = (async () => new Response('Server Error', { status: 500 })) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Introducing mails-agent',
       'Hi John, check out mails-agent.',
@@ -137,7 +138,7 @@ describe('reviewEmail', () => {
     }))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Introducing mails-agent',
       'Hi John, check out mails-agent.',
@@ -155,7 +156,7 @@ describe('reviewEmail', () => {
     ))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       {} as KnowledgeBase,
       'Hello',
       'Hi John, just wanted to reach out.',
@@ -172,7 +173,7 @@ describe('reviewEmail', () => {
     }))) as any
 
     const result = await reviewEmail(
-      mockEnv(),
+      createProvider(mockEnv()),
       sampleKnowledgeBase(),
       'Subject',
       'Body with wrong URL',

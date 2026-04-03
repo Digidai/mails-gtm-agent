@@ -11,6 +11,7 @@ import { makeDecision } from '../agent/decide'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
+import { createProvider } from '../llm/provider'
 import { TERMINAL_STATUSES } from './send-consumer'
 
 /**
@@ -64,6 +65,7 @@ async function processEvaluateMessage(
   message: EvaluateMessage,
   env: Env,
 ): Promise<void> {
+  const provider = createProvider(env)
   const { campaign_id, contact_id } = message
 
   // 1. Fetch campaign
@@ -114,7 +116,7 @@ async function processEvaluateMessage(
   }
 
   // 6. Call Agent decision engine
-  const decision = await makeDecision(env, campaign, contact, events, knowledgeBase)
+  const decision = await makeDecision(env, provider, campaign, contact, events, knowledgeBase)
 
   // 7. Increment daily LLM calls only when LLM was actually called
   if (decision.llm_called) {
@@ -209,7 +211,7 @@ async function processEvaluateMessage(
           ).bind(campaign_id).run()
 
           const reviewResult = await reviewEmail(
-            env,
+            provider,
             knowledgeBase,
             emailSubject,
             emailBody,

@@ -1,5 +1,6 @@
 import { Env, Campaign, CampaignContact, CampaignStep } from '../types'
 import { generateEmail } from '../llm/generate'
+import { createProvider } from '../llm/provider'
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -46,6 +47,7 @@ async function previewEmails(campaignId: string, request: Request, env: Env): Pr
   }
 
   // 4. Generate emails for each contact (do NOT send)
+  const provider = createProvider(env)
   const previews: Array<{
     contact: { email: string; name: string | null; company: string | null; role: string | null }
     generated: { subject: string; body: string }
@@ -53,7 +55,7 @@ async function previewEmails(campaignId: string, request: Request, env: Env): Pr
 
   for (const contact of contacts.results) {
     const stepNumber = contact.current_step || 0
-    const generated = await generateEmail(env, campaign, contact, stepNumber)
+    const generated = await generateEmail(provider, campaign, contact, stepNumber)
 
     previews.push({
       contact: {
