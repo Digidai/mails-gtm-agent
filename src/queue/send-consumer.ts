@@ -7,6 +7,7 @@ import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 import { recordAgentMessage } from '../conversations/context'
+import { TERMINAL_STATUSES, updateContactStatus, canTransition } from '../state-machine'
 
 /**
  * R2-6: Atomically claim a send slot against the global daily send limit.
@@ -43,10 +44,8 @@ async function claimGlobalSendSlot(env: Env): Promise<boolean> {
   return !!(retryResult.meta?.changes)
 }
 
-/** Terminal statuses shared by both v1 and v2 engines */
-export const TERMINAL_STATUSES = [
-  'unsubscribed', 'bounced', 'do_not_contact', 'converted', 'stopped', 'not_interested', 'interested', 'error',
-] as const
+// Re-export TERMINAL_STATUSES from state-machine for backward compatibility
+export { TERMINAL_STATUSES } from '../state-machine'
 
 export async function sendConsumer(batch: MessageBatch, env: Env): Promise<void> {
   for (const msg of batch.messages) {
@@ -135,9 +134,7 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   ).bind(to).first()
 
   if (unsub) {
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now') WHERE id = ?",
-    ).bind(contact_id).run()
+    await updateContactStatus(env.DB, contact_id, 'unsubscribed')
     msg.ack()
     return
   }
@@ -251,9 +248,7 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
 
     if ([400, 422].includes(sendRes.status)) {
       // Contact-level error (bad address, invalid payload) — mark as error, NOT bounced
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'error', updated_at = datetime('now') WHERE id = ?",
-      ).bind(contact_id).run()
+      await updateContactStatus(env.DB, contact_id, 'error')
 
       await recordEvent(env, campaign_id, contact_id, 'contact_error', {
         error: errText.slice(0, 500), status_code: sendRes.status,
@@ -390,9 +385,7 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
   ).bind(contact.email).first()
 
   if (unsub) {
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now') WHERE id = ?",
-    ).bind(contact_id).run()
+    await updateContactStatus(env.DB, contact_id, 'unsubscribed')
     msg.ack()
     return
   }
@@ -483,17 +476,13 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
 
     if ([400, 422].includes(sendRes.status)) {
       // Contact-level error (bad address, invalid payload) — mark as error, NOT bounced
-      await env.DB.prepare(
-        "UPDATE campaign_contacts SET status = 'error', updated_at = datetime('now') WHERE id = ?",
-      ).bind(contact_id).run()
+      await updateContactStatus(env.DB, contact_id, 'error')
       console.error(`Contact-level send error (${sendRes.status}) for contact ${contact_id}, marking as error`)
       msg.ack()
       return
     }
 
-    await env.DB.prepare(
-      "UPDATE campaign_contacts SET status = 'pending', updated_at = datetime('now') WHERE id = ?",
-    ).bind(contact_id).run()
+    await updateContactStatus(env.DB, contact_id, 'pending')
 
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
@@ -518,6 +507,13 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     const today = now.slice(0, 10)
     const sendLogId = crypto.randomUUID().replace(/-/g, '')
     const statsId = crypto.randomUUID().replace(/-/g, '')
+
+    // State machine guard: verify the transition is allowed before batching
+    if (!canTransition(contact.status, newStatus)) {
+      console.log(`[send-consumer] Blocked batch transition ${contact.status} -> ${newStatus} for contact ${contact_id}`)
+      msg.ack()
+      return
+    }
 
     // Batch all post-send DB writes for atomicity (parity with v2 agent send)
     await env.DB.batch([

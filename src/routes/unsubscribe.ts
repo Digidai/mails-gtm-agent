@@ -1,5 +1,6 @@
 import { Env } from '../types'
 import { verifyUnsubscribeToken } from '../compliance/unsubscribe'
+import { updateContactStatus } from '../state-machine'
 
 export async function handleUnsubscribeRoute(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
@@ -57,7 +58,9 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
       payload.email,
     ).run()
 
-    // Update contact status across ALL campaigns for this email
+    // Update contact status across ALL campaigns for this email.
+    // This is a CAN-SPAM compliance bulk operation — intentionally bypasses
+    // per-contact state machine to guarantee unsubscribe always succeeds.
     await env.DB.prepare(`
       UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now')
       WHERE email = ?

@@ -1,4 +1,5 @@
 import { Env, Campaign, CampaignContact, EvaluateMessage } from '../types'
+import { updateContactStatus } from '../state-machine'
 
 /**
  * Agent cron: runs every 10 minutes.
@@ -33,6 +34,8 @@ export async function agentCron(env: Env): Promise<void> {
       }
 
       // 3. Restore not_now contacts whose resume_at has passed
+      // State machine allows not_now -> pending (resume expiry exception).
+      // Bulk UPDATE is used here for efficiency; canTransition('not_now', 'pending') === true.
       await env.DB.prepare(`
         UPDATE campaign_contacts
         SET status = 'pending', resume_at = NULL, next_check_at = NULL, updated_at = datetime('now')
