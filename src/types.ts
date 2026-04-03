@@ -40,6 +40,7 @@ export interface Campaign {
   max_emails: number
   min_interval_days: number
   webhook_secret: string | null
+  webhook_callback_url: string | null
   dry_run: number
   daily_llm_calls: number
   daily_llm_limit: number
