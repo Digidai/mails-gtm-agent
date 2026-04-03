@@ -5,7 +5,7 @@ compatibility_date = "2024-12-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "mails-gtm"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "YOUR_D1_DATABASE_ID"  # wrangler d1 create mails-gtm
 
 # v1: send queue (shared by sequence + agent engines)
 [[queues.producers]]
