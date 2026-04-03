@@ -9,6 +9,7 @@ export interface Env {
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email
   ADMIN_TOKEN: string         // API auth token
+  WEBHOOK_SECRET?: string     // HMAC secret for inbound email webhooks from mails-agent
   UNSUBSCRIBE_SECRET: string  // HMAC secret for unsubscribe tokens (must differ from ADMIN_TOKEN)
   UNSUBSCRIBE_BASE_URL: string // default: https://mails-gtm-agent.YOUR.workers.dev
   DAILY_SEND_LIMIT: string    // default: "100"
