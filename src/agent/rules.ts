@@ -1,5 +1,5 @@
 import { Campaign, CampaignContact, Event } from '../types'
-import { TERMINAL_STATUSES } from '../queue/send-consumer'
+import { TERMINAL_STATUSES } from '../state-machine'
 
 export type HardRuleResult = 'send' | 'wait' | 'stop' | 'evaluate'
 

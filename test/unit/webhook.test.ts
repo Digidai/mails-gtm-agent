@@ -36,11 +36,20 @@ function createMockDB(config: {
           }
         }
 
-        // Contact lookup
+        // Contact lookup by email
         if (sql.includes('campaign_contacts') && sql.includes('email')) {
           return {
             bind: () => ({
               first: async () => config.contact || null,
+            }),
+          }
+        }
+
+        // Contact status lookup by id (used by updateContactStatus)
+        if (sql.includes('SELECT status FROM campaign_contacts WHERE id')) {
+          return {
+            bind: () => ({
+              first: async () => config.contact ? { status: config.contact.status } : null,
             }),
           }
         }

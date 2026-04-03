@@ -1,6 +1,7 @@
 import { Env, Campaign } from '../types'
 import { recordEvent } from './record'
 import { notifyOwner } from '../notify'
+import { updateContactStatus } from '../state-machine'
 
 /**
  * Verify HMAC-SHA256 webhook signature.
@@ -112,11 +113,9 @@ export async function handleWebhookEvent(
   // 6. Update contact status for conversion events
   if (payload.event === 'signup' || payload.event === 'payment') {
     const now = new Date().toISOString()
-    await env.DB.prepare(`
-      UPDATE campaign_contacts
-      SET status = 'converted', converted_at = ?, conversion_type = ?, updated_at = ?
-      WHERE id = ? AND status NOT IN ('unsubscribed', 'bounced')
-    `).bind(now, payload.event, now, contact.id).run()
+    await updateContactStatus(env.DB, contact.id, 'converted', {
+      converted_at: now, conversion_type: payload.event,
+    })
 
     // Notify campaign owner of conversion
     try {
