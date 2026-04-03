@@ -13,6 +13,7 @@ export interface Env {
   UNSUBSCRIBE_BASE_URL: string // default: https://mails-gtm-agent.YOUR.workers.dev
   DAILY_SEND_LIMIT: string    // default: "100"
   MAX_CSV_SIZE: string        // default: "5242880" (5MB)
+  MAX_CONTACTS_PER_IMPORT: string  // default: "10000"
 }
 
 export interface Campaign {

@@ -189,11 +189,12 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
       await env.DB.prepare(
         "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready' WHERE id = ?",
       ).bind(JSON.stringify(kb), id).run()
-    } catch (err) {
-      console.error('Knowledge base generation failed:', err)
+    } catch (kbErr) {
+      console.error(`[campaign] Knowledge base generation failed for campaign ${id}:`, kbErr)
       await env.DB.prepare(
-        "UPDATE campaigns SET knowledge_base_status = 'failed' WHERE id = ?",
+        "UPDATE campaigns SET knowledge_base_status = 'failed', updated_at = datetime('now') WHERE id = ?"
       ).bind(id).run()
+      // Don't throw — campaign was created, KB can be retried
     }
   }
 

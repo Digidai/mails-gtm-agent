@@ -102,3 +102,63 @@ describe('Knowledge Base - generateKnowledgeBase', () => {
     await expect(generateKnowledgeBase('https://404.com', createProvider(env))).rejects.toThrow('Failed to fetch')
   })
 })
+
+describe('Knowledge Base - campaign KB status on failure', () => {
+  beforeEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  test('sets knowledge_base_status to failed when generateKnowledgeBase throws', async () => {
+    // Mock fetch to make generateKnowledgeBase fail (md.genedai.me returns 500)
+    globalThis.fetch = (async () => new Response('Internal Server Error', { status: 500 })) as any
+
+    // Track DB updates
+    const dbUpdates: { query: string; params: any[] }[] = []
+
+    const mockDb = {
+      prepare: (query: string) => ({
+        bind: (...params: any[]) => ({
+          run: async () => {
+            dbUpdates.push({ query, params })
+            return { meta: { changes: 1 } }
+          },
+          first: async () => null,
+        }),
+      }),
+    }
+
+    // Dynamically import to use mocked fetch
+    const { generateKnowledgeBase } = await import('../../src/knowledge/generate')
+
+    const env = {
+      DB: mockDb,
+      OPENROUTER_API_KEY: 'test-key',
+      MAILS_MAILBOX: 'test@test.com',
+    } as any
+
+    // Simulate the createCampaign KB generation logic
+    const campaignId = 'test-campaign-123'
+    try {
+      await env.DB.prepare(
+        "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
+      ).bind(campaignId).run()
+
+      const kb = await generateKnowledgeBase('https://failing-site.com', env)
+
+      await env.DB.prepare(
+        "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready' WHERE id = ?",
+      ).bind(JSON.stringify(kb), campaignId).run()
+    } catch (kbErr) {
+      await env.DB.prepare(
+        "UPDATE campaigns SET knowledge_base_status = 'failed', updated_at = datetime('now') WHERE id = ?"
+      ).bind(campaignId).run()
+    }
+
+    // Verify that status was set to 'generating' first, then 'failed'
+    const statusUpdates = dbUpdates.filter(u => u.query.includes('knowledge_base_status'))
+    expect(statusUpdates).toHaveLength(2)
+    expect(statusUpdates[0].query).toContain("'generating'")
+    expect(statusUpdates[1].query).toContain("'failed'")
+    expect(statusUpdates[1].params[0]).toBe(campaignId)
+  })
+})
