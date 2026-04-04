@@ -15,16 +15,25 @@ Built on top of [mails-agent](https://github.com/Digidai/mails) for email delive
 - **Self-Learning Agent** -- Learns from reply patterns, adapts messaging strategy over time
 - **Daily Summary** -- Automated digest of campaign performance, replies, and actions taken
 - **MCP Server** -- Manage campaigns directly from Claude Code, Cursor, or Windsurf
-- **Reviewer Agent** -- AI pre-review checks email quality and accuracy before sending
+- **Reviewer Agent (Fail-Safe)** -- AI pre-review defaults to safe template when LLM is unavailable
+- **Event-Driven Reply Processing** -- Real-time inbound email processing via webhook (with 5-minute cron fallback)
+- **Contact State Machine** -- Priority-based status transitions prevent race conditions across concurrent writers
+- **Bounce Handling** -- Webhook endpoint for email provider bounce notifications, with global suppression
+- **Outbound Webhooks** -- Send campaign events (interested reply, conversion, bounce) to external URLs for CRM/Slack integration
+- **Thread-Based Reply Matching** -- Uses In-Reply-To headers for accurate multi-campaign reply routing
 - **Serverless** -- Zero infrastructure to manage, runs entirely on Cloudflare Workers + D1 + Queues
 
 ## Architecture
 
 ```
 Cron (1min) ──> send-cron ──> Queue ──> send-consumer ──> mails-agent API
-Cron (5min) ──> reply-cron ──> mails-agent inbox ──> LLM classify ──> update status
-Cron (1hr)  ──> agent-cron ──> self-learning ──> adapt strategy
-Cron (daily)──> summary-cron ──> generate daily digest ──> notify
+Cron (5min) ──> reply-cron (fallback) ──> classify ──> update status
+Cron (10min)──> agent-cron ──> Queue ──> evaluate-consumer ──> LLM decide
+Cron (daily)──> summary-cron ──> daily digest
+
+Webhook ────> /webhook/inbound ──> classify ──> auto-reply (real-time)
+Webhook ────> /webhook/bounce  ──> state machine ──> global suppression
+Webhook ────> /webhook/event   ──> conversion tracking
 ```
 
 | Component | Technology |
@@ -34,6 +43,17 @@ Cron (daily)──> summary-cron ──> generate daily digest ──> notify
 | Queue | Cloudflare Queues |
 | LLM | OpenRouter (Claude Sonnet) |
 | Email | mails-agent API |
+
+### LLM Provider
+
+All LLM calls go through a unified provider interface (`src/llm/provider.ts`). By default, it uses OpenRouter with automatic 429 retry (2 attempts, exponential backoff).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `OPENROUTER_API_KEY` | Required | OpenRouter API key |
+| `LLM_MODEL` | `anthropic/claude-sonnet-4` | Model to use via OpenRouter |
+
+To use a different LLM provider, modify `src/llm/provider.ts`.
 
 ## Quick Start
 
@@ -90,6 +110,7 @@ wrangler secret put MAILS_MAILBOX
 | `MAILS_API_URL` | No | `https://mails-worker.genedai.workers.dev` | mails-agent base URL |
 | `UNSUBSCRIBE_BASE_URL` | No | Worker origin | Base URL for unsubscribe links |
 | `DAILY_SEND_LIMIT` | No | `100` | Global daily send cap across all campaigns |
+| `WEBHOOK_SECRET` | No | -- | HMAC-SHA256 secret for inbound webhook signature verification (must match mails-agent) |
 
 ### Development
 
@@ -198,6 +219,41 @@ curl -X POST https://your-worker.workers.dev/api/gdpr/delete \
   -d '{"email": "user@example.com"}'
 ```
 
+## Webhooks
+
+### Inbound Email (from mails-agent)
+
+Configure `webhook_url` in mails-agent's `auth_tokens` table to receive real-time inbound email notifications:
+
+```sql
+UPDATE auth_tokens SET webhook_url = 'https://your-gtm-agent.workers.dev/webhook/inbound' WHERE mailbox = 'your@mailbox.com';
+```
+
+Requires `WEBHOOK_SECRET` to be set on both mails-agent and mails-gtm-agent for HMAC-SHA256 signature verification.
+
+### Bounce Webhook
+
+```bash
+curl -X POST https://your-worker.workers.dev/webhook/bounce \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "bounced@example.com", "type": "bounce", "reason": "Mailbox not found"}'
+```
+
+Marks the contact as bounced across all campaigns and adds to global suppression list.
+
+### Outbound Webhook (Campaign Events)
+
+Set `webhook_callback_url` when creating a campaign to receive event notifications:
+
+```json
+{
+  "webhook_callback_url": "https://your-crm.com/api/webhook"
+}
+```
+
+Events sent: `interested_reply`, `conversion`, `campaign_error`, `knowledge_gap`, `conversation_stopped`. Payload is HMAC-signed if `webhook_secret` is configured.
+
 ## Reply Intent Taxonomy
 
 | Intent | Action |
@@ -211,6 +267,34 @@ curl -X POST https://your-worker.workers.dev/api/gdpr/delete \
 | `auto_reply` | Ignore, keep in sequence |
 | `do_not_contact` | Permanent block, add to suppression list |
 | `unclear` | Mark as replied for manual review |
+
+## Contact State Machine
+
+All contact status transitions go through a priority-based state machine that prevents race conditions:
+
+| Priority | Status | Terminal? |
+|----------|--------|-----------|
+| 0 (highest) | do_not_contact | Yes |
+| 1 | unsubscribed | Yes |
+| 2 | bounced | Yes |
+| 3 | converted | Yes |
+| 4 | interested | Yes |
+| 5 | stopped | Yes |
+| 6 | error | Yes |
+| 7 | not_interested | Yes |
+| 8 | wrong_person | No |
+| 9 | not_now | No |
+| 10 | replied | No |
+| 11 | active | No |
+| 12 | queued | No |
+| 13 | sent | No |
+| 14 (lowest) | pending | No |
+
+**Rule:** A contact cannot transition from a higher-priority status to a lower-priority status. For example, an `interested` contact cannot be changed back to `active`.
+
+**Exceptions:**
+- `not_now` → `pending` (when resume_at expires)
+- `wrong_person` → any (reclassification on new reply)
 
 ## Competitive Landscape
 
