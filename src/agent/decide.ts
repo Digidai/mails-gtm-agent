@@ -260,7 +260,7 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 7. Keep emails concise (max 4 sentences), professional, and value-driven
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
-10. End every email with exactly "Best,\n[sender name or team name]" — do NOT add footer, unsubscribe link, or physical address (those are added automatically)
+10. End every email with exactly "Best,\n${campaign.product_name} team" — use this EXACT text, do not capitalize differently or change wording. Do NOT add footer, unsubscribe link, or physical address (those are added automatically)
 11. Do NOT include "[Your name]" placeholder — use the product name as sender
 
 ## Writing Style (CRITICAL)
@@ -270,6 +270,9 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 - NEVER use exclamation marks more than once per email
 - Do NOT list features in bullet points. Pick ONE relevant angle and talk about it naturally.
 - Sound like a short note from a developer, not a marketing email
+- VARY your call-to-action phrasing. Do NOT reuse "Worth a look", "Check it out", "Take a look" across emails. Use different phrasings: ask a question, describe a benefit, give a specific use case, or just drop the link naturally after a relevant sentence.
+- Do NOT list features, commands, or steps in separate lines. If you mention a command, weave it into a sentence naturally (e.g., "You can get started with npm install -g mails-agent").
+- NEVER start with generic pain-point statements like "Most developers struggle with...", "Teams often face...", "Building X is hard...". Instead, be specific: mention the contact's actual company, role, or a concrete scenario relevant to them.
 
 ## Decision
 Return ONLY valid JSON:
