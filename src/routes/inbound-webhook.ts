@@ -125,7 +125,29 @@ export async function handleInboundWebhook(
     }
   }
 
-  // 7. Match sender to campaign_contacts (same query as reply-cron)
+  // 7. Fetch full email data early — needed for thread matching (In-Reply-To) and body text
+  let replyText = ''
+  let detectedAutoResponder = false
+  let inReplyTo = ''
+  const emailId = payload.email_id
+  if (emailId) {
+    try {
+      const emailRes = await mailsFetch(env, `/v1/email?id=${emailId}`)
+      if (emailRes.ok) {
+        const emailData = await emailRes.json() as any
+        replyText = emailData.body_text || emailData.body || ''
+        detectedAutoResponder = isAutoResponder(emailData.headers)
+        // Extract In-Reply-To for thread-based contact matching
+        const rawHeaders = emailData.headers || {}
+        inReplyTo = rawHeaders['in-reply-to'] || rawHeaders['In-Reply-To'] || ''
+      }
+    } catch (err) {
+      console.error(`[inbound-webhook] Failed to fetch email data for ${emailId}:`, err)
+    }
+  }
+
+  // 8. Match sender to campaign_contacts
+  // Thread matching: ORDER BY prefers contact whose sent_message_id matches In-Reply-To
   const contacts = await env.DB.prepare(`
     SELECT cc.*, c.engine, c.id as _campaign_id, c.name as _campaign_name,
            c.knowledge_base as _kb, c.conversion_url as _conversion_url,
@@ -138,9 +160,11 @@ export async function handleInboundWebhook(
     WHERE cc.email = ? AND c.status = 'active'
       AND cc.status IN ('sent', 'replied', 'active', 'interested', 'not_now', 'wrong_person')
       AND cc.last_sent_at IS NOT NULL
-    ORDER BY cc.last_sent_at DESC
+    ORDER BY
+      CASE WHEN cc.sent_message_id = ? THEN 0 ELSE 1 END,
+      cc.last_sent_at DESC
     LIMIT 1
-  `).bind(fromEmail.toLowerCase()).all<CampaignContact & {
+  `).bind(fromEmail.toLowerCase(), inReplyTo).all<CampaignContact & {
     engine: string
     _campaign_id: string
     _campaign_name: string
@@ -164,23 +188,6 @@ export async function handleInboundWebhook(
   if (allFromEmails.has(fromEmail.toLowerCase())) {
     console.log(`[inbound-webhook] Skipping self-reply from ${fromEmail}`)
     return jsonResponse({ status: 'skipped', reason: 'self-reply' })
-  }
-
-  // 8. Fetch full email body via mailsFetch
-  let replyText = ''
-  let detectedAutoResponder = false
-  const emailId = payload.email_id
-  if (emailId) {
-    try {
-      const emailRes = await mailsFetch(env, `/v1/email?id=${emailId}`)
-      if (emailRes.ok) {
-        const emailData = await emailRes.json() as any
-        replyText = emailData.body_text || emailData.body || ''
-        detectedAutoResponder = isAutoResponder(emailData.headers)
-      }
-    } catch (err) {
-      console.error(`[inbound-webhook] Failed to fetch email body for ${emailId}:`, err)
-    }
   }
 
   if (!replyText.trim()) {
