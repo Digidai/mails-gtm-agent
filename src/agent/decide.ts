@@ -126,78 +126,7 @@ export async function makeDecision(
         }
 
         // Post-processing: enforce quality rules the LLM might ignore
-
-        // Fix banned CTA phrases
-        parsed.email.body = parsed.email.body
-          .replace(/Worth trying on your next project\?/gi, '')
-          .replace(/Check it out[^.]*[.:]/gi, '')
-          .replace(/Take a look:/gi, '')
-          .replace(/Worth a look:/gi, '')
-          .replace(/Reply if you want me to set up a test mailbox[^.]*[.?]?\s*/gi, '')
-          .trim()
-
-        // Fix banned opening phrases
-        parsed.email.body = parsed.email.body
-          .replace(/^Most (developers|teams|dev tools teams|companies|people)\b[^.]*\.\s*/i, '')
-          .trim()
-
-        // Fix "We built" sentence openers → rephrase to product name
-        parsed.email.body = parsed.email.body
-          .replace(/\bWe built\b/g, `${campaign.product_name} is`)
-          .replace(/\bI built\b/g, `${campaign.product_name} is`)
-
-        // Remove bullet point lists (• or - at start of line)
-        parsed.email.body = parsed.email.body
-          .replace(/\n[•\-\*]\s+[^\n]+/g, '')
-          .replace(/Key (features|benefits)[^:]*:\s*/gi, '')
-          .trim()
-
-        // Fix feature enumeration: "send, receive, and X" → keep only the last item
-        parsed.email.body = parsed.email.body
-          .replace(/send[,/]\s*receive[,/]?\s*(and\s+)?(search|extract|handle|auto-extract)[^.]*\./gi, (match: string) => {
-            const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search emails|handle email)/i)
-            return lastFeature ? `${lastFeature[0]}.` : match
-          })
-          // Also catch "send emails (with attachments), receive and store..." patterns
-          .replace(/send emails[^.]*,\s*receive[^.]*,\s*(and\s+)?[^.]*\./gi, (match: string) => {
-            const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search[^.]*)/i)
-            return lastFeature ? `${lastFeature[0]}.` : match
-          })
-
-        // Fix subject capitalization: ensure first letter of each word > 3 chars is uppercase
-        parsed.email.subject = parsed.email.subject
-          .split(' ')
-          .map((word: string, i: number) => {
-            if (i === 0 || word.length > 3) {
-              return word.charAt(0).toUpperCase() + word.slice(1)
-            }
-            return word
-          })
-          .join(' ')
-
-        // Fix greeting: use first name only, not full name
-        const firstName = (contact.name || '').split(' ')[0] || contact.name || ''
-        if (firstName) {
-          parsed.email.body = parsed.email.body
-            .replace(new RegExp(`^(Hi|Hey|Hello)\\s+${contact.name?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,`, 'i'),
-              `$1 ${firstName},`)
-        }
-
-        // Enforce sentence count: keep max 4 sentences (greeting + 3 body)
-        const bodyWithoutGreeting = parsed.email.body.replace(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i, '')
-        const sentences = bodyWithoutGreeting
-          .split(/(?<=[.!?])\s+/)
-          .filter((s: string) => s.trim().length > 0)
-        if (sentences.length > 4) {
-          const greeting = parsed.email.body.match(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i)?.[0] || ''
-          parsed.email.body = greeting + sentences.slice(0, 3).join(' ')
-        }
-
-        // Ensure link is not on its own line — merge it into last sentence
-        parsed.email.body = parsed.email.body
-          .replace(/\n\n?(https?:\/\/\S+)\s*$/m, ' $1')
-          .replace(/\n\n?(https?:\/\/\S+)\n/m, ' $1 ')
-          .trim()
+        parsed.email = sanitizeEmail(parsed.email, contact, campaign)
       }
 
       // Default wait_days
@@ -318,6 +247,102 @@ function sanitizeForPrompt(value: string | null | undefined, maxLen = 200): stri
   s = s.replace(/\bnew\s+instructions?\s*:/gi, '[FILTERED]')
   s = s.replace(/\boverride\b/gi, '[FILTERED]')
   return s
+}
+
+/**
+ * Post-process LLM-generated email to enforce quality rules.
+ * Exported so evaluate-consumer can also sanitize reviewer-corrected emails.
+ */
+export function sanitizeEmail(
+  email: { subject: string; body: string; angle?: string },
+  contact: CampaignContact,
+  campaign: Campaign,
+): { subject: string; body: string; angle?: string } {
+  let { subject, body } = email
+
+  // Remove bullet point lists (• or - at start of line) and "Key features:" headers
+  body = body
+    .replace(/\n[•\-\*]\s+[^\n]+/g, '')
+    .replace(/Key (features|benefits)[^:]*:\s*/gi, '')
+    .replace(/Getting started[^:]*:\s*/gi, '')
+    .replace(/Learn more[^:]*:\s*/gi, '')
+    .trim()
+
+  // Fix banned CTA phrases
+  body = body
+    .replace(/Worth trying on your next project\?/gi, '')
+    .replace(/Check it out[^.]*[.:]/gi, '')
+    .replace(/Take a look:/gi, '')
+    .replace(/Worth a look:/gi, '')
+    .replace(/Reply if you want me to set up a test mailbox[^.]*[.?]?\s*/gi, '')
+    .trim()
+
+  // Fix banned opening phrases
+  body = body
+    .replace(/^Most (developers|teams|dev tools teams|companies|people)\b[^.]*\.\s*/i, '')
+    .trim()
+
+  // Fix "We built" / "I built" / "Built" sentence openers
+  body = body
+    .replace(/\bWe built\b/g, `${campaign.product_name} is`)
+    .replace(/\bI built\b/g, `${campaign.product_name} is`)
+    .replace(/^Built\b/gm, `${campaign.product_name} is`)
+
+  // Fix feature enumeration: "send, receive, and X" → keep only the last item
+  body = body
+    .replace(/send[,/]\s*receive[,/]?\s*(and\s+)?(search|extract|handle|auto-extract)[^.]*\./gi, (match: string) => {
+      const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search emails|handle email)/i)
+      return lastFeature ? `${lastFeature[0]}.` : match
+    })
+    .replace(/send emails[^.]*,\s*receive[^.]*,\s*(and\s+)?[^.]*\./gi, (match: string) => {
+      const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search[^.]*)/i)
+      return lastFeature ? `${lastFeature[0]}.` : match
+    })
+
+  // Fix subject capitalization
+  subject = subject
+    .split(' ')
+    .map((word: string, i: number) => {
+      if (i === 0 || word.length > 3) {
+        return word.charAt(0).toUpperCase() + word.slice(1)
+      }
+      return word
+    })
+    .join(' ')
+
+  // Fix greeting: use first name only
+  const firstName = (contact.name || '').split(' ')[0] || contact.name || ''
+  if (firstName && contact.name && contact.name.includes(' ')) {
+    body = body.replace(
+      new RegExp(`^(Hi|Hey|Hello)\\s+${contact.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,`, 'i'),
+      `$1 ${firstName},`
+    )
+  }
+
+  // Fix signature: ensure exactly "Best," not "Best regards,"
+  body = body.replace(/Best regards,/gi, 'Best,')
+
+  // Enforce sentence count: keep max 3 body sentences (after greeting)
+  const greetingMatch = body.match(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i)
+  const greeting = greetingMatch?.[0] || ''
+  const bodyAfterGreeting = body.slice(greeting.length).trim()
+  const sentences = bodyAfterGreeting
+    .split(/(?<=[.!?])\s+/)
+    .filter((s: string) => s.trim().length > 0)
+  if (sentences.length > 4) {
+    body = greeting + sentences.slice(0, 3).join(' ')
+  }
+
+  // Ensure link is not on its own line
+  body = body
+    .replace(/\n\n?(https?:\/\/\S+)\s*$/m, ' $1')
+    .replace(/\n\n?(https?:\/\/\S+)\n/m, ' $1 ')
+    .trim()
+
+  // Clean up multiple blank lines
+  body = body.replace(/\n{3,}/g, '\n\n').trim()
+
+  return { ...email, subject, body }
 }
 
 export function buildSystemPrompt(
