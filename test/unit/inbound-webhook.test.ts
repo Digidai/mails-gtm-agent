@@ -36,11 +36,18 @@ function createMockDB(config: {
         bind: (...args: any[]) => {
           recordedQueries.push({ sql, binds: args })
 
-          // processed_messages INSERT OR IGNORE (dedup)
+          // processed_messages SELECT dedup check
+          if (sql.includes('SELECT 1 FROM processed_messages')) {
+            return {
+              first: async () => config.dedupInserted === false ? { '1': 1 } : null,
+            }
+          }
+
+          // processed_messages INSERT OR IGNORE (post-processing write)
           if (sql.includes('INSERT OR IGNORE INTO processed_messages')) {
             return {
               run: async () => ({
-                meta: { changes: config.dedupInserted !== false ? 1 : 0 },
+                meta: { changes: 1 },
               }),
             }
           }

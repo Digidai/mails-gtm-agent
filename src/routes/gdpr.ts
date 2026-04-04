@@ -49,6 +49,18 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
     env.DB.prepare(
       'DELETE FROM tracked_links WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
     ).bind(email),
+    // 4.5. Delete from conversations
+    env.DB.prepare(
+      'DELETE FROM conversations WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email),
+    // 4.6. Delete from processed_messages (cleanup dedup records by contact_id)
+    env.DB.prepare(
+      'DELETE FROM processed_messages WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?)'
+    ).bind(email),
+    // 4.7. Delete from processed_messages by send_log message_id (covers null contact_id / old data)
+    env.DB.prepare(
+      "DELETE FROM processed_messages WHERE msg_id IN (SELECT message_id FROM send_log WHERE contact_id IN (SELECT id FROM campaign_contacts WHERE email = ?))"
+    ).bind(email),
     // 5. Delete from campaign_contacts (parent)
     env.DB.prepare(
       'DELETE FROM campaign_contacts WHERE email = ?'
@@ -70,8 +82,10 @@ async function deleteUserData(request: Request, env: Env): Promise<Response> {
       events: results[1].meta?.changes || 0,
       decisions: results[2].meta?.changes || 0,
       tracked_links: results[3].meta?.changes || 0,
-      contacts: results[4].meta?.changes || 0,
-      unsubscribes: results[5].meta?.changes || 0,
+      conversations: results[4].meta?.changes || 0,
+      processed_messages: (results[5].meta?.changes || 0) + (results[6].meta?.changes || 0),
+      contacts: results[7].meta?.changes || 0,
+      unsubscribes: results[8].meta?.changes || 0,
     },
     note: 'Email has been added to global suppression list',
   })

@@ -258,6 +258,14 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
       return
     }
 
+    // Refund the global send slot since the email was not actually sent
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      await env.DB.prepare(
+        "UPDATE daily_stats SET sent_count = MAX(0, sent_count - 1) WHERE campaign_id = '__global__' AND date = ?"
+      ).bind(today).run()
+    } catch { /* best-effort refund */ }
+
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
 
@@ -484,6 +492,14 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
     }
 
     await updateContactStatus(env.DB, contact_id, 'pending')
+
+    // Refund the global send slot since the email was not actually sent
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      await env.DB.prepare(
+        "UPDATE daily_stats SET sent_count = MAX(0, sent_count - 1) WHERE campaign_id = '__global__' AND date = ?"
+      ).bind(today).run()
+    } catch { /* best-effort refund */ }
 
     throw new Error(`Send API error: ${sendRes.status} ${errText}`)
   }
