@@ -1,5 +1,6 @@
 import { Env, Campaign, CampaignContact, IntentType, KnowledgeBase } from '../types'
 import { classifyReply } from '../llm/classify'
+import { createProvider } from '../llm/provider'
 import { mailsFetch } from '../mails-api'
 import { recordEvent } from '../events/record'
 import { recordContactMessage, getConversationHistory } from '../conversations/context'
@@ -114,13 +115,13 @@ export async function handleInboundWebhook(
     return jsonResponse({ status: 'skipped', reason: 'self-reply' })
   }
 
-  // 6. Atomic dedup via processed_messages table
+  // 6. Dedup check via processed_messages table (read-only; write deferred to after successful processing)
   const msgId = payload.email_id || payload.message_id
   if (msgId) {
-    const insertResult = await env.DB.prepare(
-      "INSERT OR IGNORE INTO processed_messages (msg_id, created_at) VALUES (?, datetime('now'))"
-    ).bind(msgId).run()
-    if (!insertResult.meta?.changes) {
+    const existing = await env.DB.prepare(
+      "SELECT 1 FROM processed_messages WHERE msg_id = ?"
+    ).bind(msgId).first()
+    if (existing) {
       return jsonResponse({ status: 'skipped', reason: 'duplicate' })
     }
   }
@@ -189,6 +190,7 @@ export async function handleInboundWebhook(
   }
 
   // 9. Classify intent via LLM (with quota check)
+  const provider = createProvider(env)
   let effectiveIntent: IntentType
   let classification: { intent: IntentType; confidence: number; resume_date: string | null }
 
@@ -203,7 +205,7 @@ export async function handleInboundWebhook(
       return jsonResponse({ status: 'skipped', reason: 'llm quota exhausted' })
     }
 
-    classification = await classifyReply(env, replyText)
+    classification = await classifyReply(provider, replyText)
     effectiveIntent = classification.confidence < 0.7 ? 'unclear' as IntentType : classification.intent
   }
 
@@ -252,13 +254,20 @@ export async function handleInboundWebhook(
 
       // Execute action based on intent (skip if duplicate content)
       if (!isDuplicateContent) {
-        await handleIntent(env, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
+        await handleIntent(env, provider, campaign, contact, effectiveIntent, classification.confidence, classification.resume_date, replyText, msg)
       }
     } catch (err) {
       console.error(`[inbound-webhook] Processing error for contact ${contact.id}:`, err)
     }
   }
 
-  // 11. Always return 200 OK — webhook should not retry
+  // 11. Mark as processed only after successful handling
+  if (msgId) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO processed_messages (msg_id, created_at) VALUES (?, datetime('now'))"
+    ).bind(msgId).run()
+  }
+
+  // 12. Always return 200 OK — webhook should not retry
   return jsonResponse({ status: 'processed', intent: effectiveIntent })
 }

@@ -86,7 +86,7 @@ export async function updateContactStatus(
     return false
   }
 
-  // Build UPDATE with extra fields
+  // Build CAS UPDATE — only applies if status hasn't changed since our read
   const sets = ["status = ?", "updated_at = datetime('now')"]
   const binds: unknown[] = [newStatus]
 
@@ -97,11 +97,17 @@ export async function updateContactStatus(
     }
   }
 
-  binds.push(contactId)
+  // CAS: WHERE id = ? AND status = ? (the status we read above)
+  binds.push(contactId, current.status)
 
-  await db.prepare(
-    `UPDATE campaign_contacts SET ${sets.join(', ')} WHERE id = ?`,
+  const result = await db.prepare(
+    `UPDATE campaign_contacts SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
   ).bind(...binds).run()
+
+  if (!result.meta?.changes) {
+    console.log(`[state-machine] CAS failed: status changed between read and write for contact ${contactId}`)
+    return false
+  }
 
   return true
 }

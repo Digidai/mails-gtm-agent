@@ -108,7 +108,9 @@ describe('updateContactStatus', () => {
     expect(result).toBe(true)
     expect(updates).toHaveLength(1)
     expect(updates[0].binds[0]).toBe('active') // new status
-    expect(updates[0].binds[updates[0].binds.length - 1]).toBe('contact-1') // contact id
+    // CAS: binds are [..., contactId, currentStatus]
+    expect(updates[0].binds[updates[0].binds.length - 2]).toBe('contact-1') // contact id
+    expect(updates[0].binds[updates[0].binds.length - 1]).toBe('pending') // CAS guard on current status
   })
 
   test('blocked transition returns false and does not update', async () => {

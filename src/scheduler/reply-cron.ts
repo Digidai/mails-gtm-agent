@@ -148,13 +148,12 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
-    // Fix #2: Atomic dedup via INSERT OR IGNORE on processed_messages table.
-    // Only proceed if the insert succeeds (i.e., msg_id was not already processed).
+    // Dedup check via processed_messages (read-only; write deferred to after successful processing)
     if (msg.id) {
-      const insertResult = await env.DB.prepare(
-        "INSERT OR IGNORE INTO processed_messages (msg_id, created_at) VALUES (?, datetime('now'))"
-      ).bind(msg.id).run()
-      if (!insertResult.meta?.changes) {
+      const existing = await env.DB.prepare(
+        "SELECT 1 FROM processed_messages WHERE msg_id = ?"
+      ).bind(msg.id).first()
+      if (existing) {
         // Already processed — skip
         if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
           lastSuccessfulReceivedAt = msgReceivedAt
@@ -323,8 +322,16 @@ async function _replyCron(env: Env): Promise<void> {
     }
 
     // P1-4: Only advance cursor for successfully processed messages
-    if (msgProcessedOk && msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
-      lastSuccessfulReceivedAt = msgReceivedAt
+    if (msgProcessedOk) {
+      // Mark as processed only after successful handling
+      if (msg.id) {
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO processed_messages (msg_id, created_at) VALUES (?, datetime('now'))"
+        ).bind(msg.id).run()
+      }
+      if (msgReceivedAt && (!lastSuccessfulReceivedAt || msgReceivedAt > lastSuccessfulReceivedAt)) {
+        lastSuccessfulReceivedAt = msgReceivedAt
+      }
     }
   }
 
