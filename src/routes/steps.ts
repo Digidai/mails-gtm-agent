@@ -42,7 +42,12 @@ async function setSteps(campaignId: string, request: Request, env: Env): Promise
     return json({ error: 'Campaign not found' }, 404)
   }
 
-  const body = await request.json() as any
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
   const steps: StepInput[] = body.steps
 
   if (!Array.isArray(steps) || steps.length === 0) {
