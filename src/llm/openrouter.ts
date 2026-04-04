@@ -1,7 +1,7 @@
 import { Env } from '../types'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const LLM_TIMEOUT_MS = 10_000
+const LLM_TIMEOUT_MS = 20_000
 const MAX_RETRIES = 2
 const RETRY_DELAYS = [1000, 3000] // 1s, 3s backoff
 
