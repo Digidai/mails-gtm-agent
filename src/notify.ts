@@ -15,27 +15,68 @@ async function fireCallbackWebhook(
   const url = (campaign as any).webhook_callback_url
   if (!url) return
 
+  // URL validation: https only
   try {
-    const payload = JSON.stringify({
-      event: type,
-      campaign_id: campaign.id,
-      campaign_name: campaign.name,
-      timestamp: new Date().toISOString(),
-      data,
-    })
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') {
+      console.error(`[webhook-callback] Rejected non-HTTPS URL: ${url}`)
+      return
+    }
+    // Block private IPs
+    const hostname = parsed.hostname.toLowerCase()
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
+        hostname.startsWith('10.') || hostname.startsWith('192.168.') || hostname.startsWith('172.') ||
+        hostname === '[::1]' || hostname.endsWith('.internal') || hostname.endsWith('.local')) {
+      console.error(`[webhook-callback] Rejected private IP URL: ${url}`)
+      return
+    }
+  } catch {
+    console.error(`[webhook-callback] Invalid URL: ${url}`)
+    return
+  }
 
+  const payload = JSON.stringify({
+    event: type,
+    campaign_id: campaign.id,
+    campaign_name: campaign.name,
+    timestamp: new Date().toISOString(),
+    data,
+  })
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+
+  // HMAC signature if webhook_secret is available
+  if (campaign.webhook_secret) {
+    const encoder = new TextEncoder()
+    const key = await crypto.subtle.importKey(
+      'raw', encoder.encode(campaign.webhook_secret),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    )
+    const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
+    const hex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('')
+    headers['X-Webhook-Signature'] = `sha256=${hex}`
+  }
+
+  // 5s timeout
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+  try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: payload,
+      signal: controller.signal,
     })
-
     if (!res.ok) {
       console.error(`[webhook-callback] POST to ${url} failed: ${res.status}`)
     }
   } catch (err) {
-    // Webhook failure should never block the main flow
     console.error(`[webhook-callback] Error posting to ${url}:`, err)
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
