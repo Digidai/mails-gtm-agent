@@ -7,7 +7,7 @@ import {
   Event,
   KnowledgeBase,
 } from '../types'
-import { makeDecision } from '../agent/decide'
+import { makeDecision, sanitizeEmail } from '../agent/decide'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
@@ -233,6 +233,11 @@ async function processEvaluateMessage(
           console.error(`[evaluate] Review failed for contact ${contact_id}, proceeding with original:`, err)
         }
       }
+
+      // Final sanitization: catch bullet lists, banned phrases, etc. from reviewer corrections
+      const sanitized = sanitizeEmail({ subject: emailSubject, body: emailBody }, contact, campaign)
+      emailSubject = sanitized.subject
+      emailBody = sanitized.body
 
       // Only create tracked links for non-dry-run campaigns.
       // Dry-run tracked links would be reachable via /t/:id, leaking tracking URLs.
