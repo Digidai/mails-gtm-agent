@@ -145,7 +145,7 @@ export async function makeDecision(
         // Enforce sentence count: split by period/question/exclamation, keep max 4
         const sentences = parsed.email.body
           .split(/(?<=[.!?])\s+/)
-          .filter(s => s.trim().length > 0)
+          .filter((s: string) => s.trim().length > 0)
         if (sentences.length > 5) {
           // Keep first 4 sentences
           parsed.email.body = sentences.slice(0, 4).join(' ')
