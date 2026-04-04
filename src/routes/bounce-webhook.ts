@@ -18,10 +18,17 @@ export async function handleBounceWebhook(
   if (!auth || !auth.startsWith('Bearer ')) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
-  // Use simple comparison for admin token (this is an internal webhook)
+  // Timing-safe token comparison
   const token = auth.slice(7)
-  if (token !== env.ADMIN_TOKEN) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+  const encoder = new TextEncoder()
+  const hashA = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(token)))
+  const hashB = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(env.ADMIN_TOKEN)))
+  let diff = 0
+  for (let i = 0; i < hashA.length; i++) {
+    diff |= hashA[i] ^ hashB[i]
+  }
+  if (diff !== 0) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
   }
 
   // 2. Parse payload
@@ -40,9 +47,9 @@ export async function handleBounceWebhook(
   const bounceType = body.type || 'bounce'
   const reason = body.reason || 'Unknown'
 
-  // 3. Find all contacts with this email across active campaigns
+  // 3. Find all contacts with this email across ALL campaigns (not just active)
   const contacts = await env.DB.prepare(
-    "SELECT cc.id, cc.campaign_id, cc.status FROM campaign_contacts cc JOIN campaigns c ON c.id = cc.campaign_id WHERE cc.email = ? AND c.status = 'active'"
+    "SELECT cc.id, cc.campaign_id, cc.status FROM campaign_contacts cc WHERE cc.email = ?"
   ).bind(email).all<{ id: string; campaign_id: string; status: string }>()
 
   if (!contacts.results?.length) {
@@ -65,6 +72,11 @@ export async function handleBounceWebhook(
       })
     }
   }
+
+  // Global suppression: prevent this address from being emailed in future campaigns
+  await env.DB.prepare(
+    "INSERT INTO unsubscribes (id, email, campaign_id, reason) VALUES (?, ?, '__global__', ?) ON CONFLICT(email, campaign_id) DO NOTHING"
+  ).bind(crypto.randomUUID().replace(/-/g, ''), email, `Hard bounce: ${reason.slice(0, 200)}`).run()
 
   return new Response(JSON.stringify({ ok: true, matched: contacts.results.length, updated }), {
     status: 200,
