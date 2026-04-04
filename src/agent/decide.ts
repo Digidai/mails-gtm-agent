@@ -14,15 +14,15 @@ export async function getAngleStats(env: Env, campaignId: string): Promise<strin
     const rows = await env.DB.prepare(`
       SELECT
         dl.email_angle as angle,
-        COUNT(*) as total,
-        SUM(CASE WHEN e_click.id IS NOT NULL THEN 1 ELSE 0 END) as clicks,
+        COUNT(DISTINCT dl.id) as total,
+        SUM(CASE WHEN EXISTS (
+          SELECT 1 FROM events e WHERE e.contact_id = dl.contact_id
+          AND e.event_type = 'link_click' AND e.created_at > dl.created_at
+        ) THEN 1 ELSE 0 END) as clicks,
         SUM(CASE WHEN cc.status = 'converted' AND cc.converted_at IS NOT NULL THEN 1 ELSE 0 END) as conversions,
         SUM(CASE WHEN cc.status = 'interested' THEN 1 ELSE 0 END) as interested
       FROM decision_log dl
       JOIN campaign_contacts cc ON cc.id = dl.contact_id
-      LEFT JOIN events e_click ON e_click.contact_id = dl.contact_id
-        AND e_click.event_type = 'link_click'
-        AND e_click.created_at > dl.created_at
       WHERE dl.campaign_id = ? AND dl.action = 'send' AND dl.email_angle IS NOT NULL
       GROUP BY dl.email_angle
       ORDER BY conversions DESC, clicks DESC

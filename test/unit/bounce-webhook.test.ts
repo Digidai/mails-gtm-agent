@@ -18,11 +18,20 @@ function createMockDB(config: {
   return {
     db: {
       prepare: (sql: string) => {
-        // Find contacts by email across active campaigns
-        if (sql.includes('campaign_contacts cc JOIN campaigns c')) {
+        // Find contacts by email across all campaigns
+        if (sql.includes('FROM campaign_contacts cc WHERE cc.email')) {
           return {
             bind: () => ({
               all: async () => ({ results: config.contacts || [] }),
+            }),
+          }
+        }
+
+        // Global suppression insert (unsubscribes)
+        if (sql.includes('INSERT INTO unsubscribes')) {
+          return {
+            bind: (...args: any[]) => ({
+              run: async () => ({ meta: { changes: 1 } }),
             }),
           }
         }
