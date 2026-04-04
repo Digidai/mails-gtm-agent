@@ -89,7 +89,12 @@ async function importContacts(request: Request, env: Env): Promise<Response> {
     csvText = await request.text()
   } else {
     // Default: JSON body with { csv, campaign_id }
-    const body = await request.json() as any
+    let body: any
+    try {
+      body = await request.json()
+    } catch {
+      return json({ error: 'Invalid JSON body' }, 400)
+    }
     csvText = body.csv
     campaignId = body.campaign_id
   }

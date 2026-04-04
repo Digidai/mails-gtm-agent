@@ -14,7 +14,7 @@ export interface ReviewResult {
  * Checks that product descriptions match the knowledge base
  * and that no fabricated features/claims are present.
  *
- * On LLM failure, defaults to approved (don't block sends).
+ * On LLM failure, defaults to NOT approved (fail-safe: use safe template).
  */
 export async function reviewEmail(
   provider: LLMProvider,
@@ -68,11 +68,11 @@ ${body}`
       }
     }
   } catch (err) {
-    console.error('[review] LLM review failed, defaulting to approved:', err)
+    console.error('[review] LLM review failed, defaulting to NOT approved (fail-safe):', err)
   }
 
-  // On failure, default to approved to avoid blocking sends
-  return { approved: true, issues: [] }
+  // On failure, default to NOT approved — use safe template (fail-safe)
+  return { approved: false, issues: ['LLM review unavailable — using safe template'] }
 }
 
 /**
