@@ -70,7 +70,12 @@ export async function handleCampaignRoutes(request: Request, env: Env): Promise<
 }
 
 async function createCampaign(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as any
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
 
   const engine = body.engine || 'agent'
 
@@ -386,7 +391,12 @@ async function updateKnowledge(id: string, request: Request, env: Env): Promise<
     return json({ error: 'Campaign not found' }, 404)
   }
 
-  const body = await request.json() as any
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
 
   if (!body.knowledge_base || typeof body.knowledge_base !== 'object') {
     return json({ error: 'knowledge_base must be a JSON object' }, 400)

@@ -21,7 +21,12 @@ export async function handleGdprRoutes(request: Request, env: Env): Promise<Resp
 }
 
 async function deleteUserData(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as any
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
   const email = body.email?.toLowerCase()
 
   if (!email) {

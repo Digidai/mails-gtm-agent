@@ -171,8 +171,15 @@ async function _replyCron(env: Env): Promise<void> {
       continue
     }
 
+    // Extract In-Reply-To header for thread-based contact matching.
+    // Prefer thread match over recency to avoid mis-routing when a contact
+    // appears in multiple campaigns.
+    const msgHeaders = msg.headers || {}
+    const inReplyTo = msgHeaders['in-reply-to'] || msgHeaders['In-Reply-To'] || ''
+
     // Only match contacts in non-terminal, non-already-classified states.
     // v2.1: Also match 'interested' contacts for conversational follow-up
+    // Thread matching: ORDER BY prefers contact whose sent_message_id matches In-Reply-To
     const contacts = await env.DB.prepare(`
       SELECT cc.*, c.engine, c.id as _campaign_id, c.name as _campaign_name,
              c.knowledge_base as _kb, c.conversion_url as _conversion_url,
@@ -185,9 +192,11 @@ async function _replyCron(env: Env): Promise<void> {
       WHERE cc.email = ? AND c.status = 'active'
         AND cc.status IN ('sent', 'replied', 'active', 'interested', 'not_now', 'wrong_person')
         AND cc.last_sent_at IS NOT NULL
-      ORDER BY cc.last_sent_at DESC
+      ORDER BY
+        CASE WHEN cc.sent_message_id = ? THEN 0 ELSE 1 END,
+        cc.last_sent_at DESC
       LIMIT 1
-    `).bind(fromEmail.toLowerCase()).all<CampaignContact & {
+    `).bind(fromEmail.toLowerCase(), inReplyTo).all<CampaignContact & {
       engine: string
       _campaign_id: string
       _campaign_name: string
@@ -221,8 +230,8 @@ async function _replyCron(env: Env): Promise<void> {
     }
 
     // Fix #4: Check auto-responder headers before LLM classification
-    const msgHeaders = msg.headers || msg.header || null
-    let detectedAutoResponder = isAutoResponder(msgHeaders)
+    const autoReplyHeaders = msg.headers || msg.header || null
+    let detectedAutoResponder = isAutoResponder(autoReplyHeaders)
 
     // Fetch full email body (inbox list doesn't include body_text)
     let replyText = msg.text || msg.body_text || msg.body || msg.snippet || ''

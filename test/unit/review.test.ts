@@ -116,7 +116,7 @@ describe('reviewEmail', () => {
     expect(result.corrected_body).toBeUndefined()
   })
 
-  test('defaults to approved on LLM failure', async () => {
+  test('defaults to NOT approved on LLM failure (fail-safe)', async () => {
     globalThis.fetch = (async () => new Response('Server Error', { status: 500 })) as any
 
     const result = await reviewEmail(
@@ -128,11 +128,11 @@ describe('reviewEmail', () => {
       'mails-agent',
     )
 
-    expect(result.approved).toBe(true)
-    expect(result.issues).toEqual([])
+    expect(result.approved).toBe(false)
+    expect(result.issues).toEqual(['LLM review unavailable — using safe template'])
   })
 
-  test('defaults to approved on invalid JSON response', async () => {
+  test('defaults to NOT approved on invalid JSON response (fail-safe)', async () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({
       choices: [{ message: { content: 'not valid json at all' } }],
     }))) as any
@@ -146,8 +146,8 @@ describe('reviewEmail', () => {
       'mails-agent',
     )
 
-    expect(result.approved).toBe(true)
-    expect(result.issues).toEqual([])
+    expect(result.approved).toBe(false)
+    expect(result.issues).toEqual(['LLM review unavailable — using safe template'])
   })
 
   test('handles empty knowledge base', async () => {
