@@ -24,13 +24,7 @@ export function generateComplianceFooter(physicalAddress: string, unsubscribeUrl
   if (!address) {
     console.warn('[CAN-SPAM] Physical address is missing from email footer. This violates CAN-SPAM requirements.')
   }
-  const lines = [
-    '',
-    '---',
-    address || '[Physical address not configured - CAN-SPAM violation]',
-    `To unsubscribe: ${unsubscribeUrl}`,
-  ]
-  return lines.join('\n')
+  return `\n\n—\n${address || '[Physical address not configured - CAN-SPAM violation]'}\nUnsubscribe: ${unsubscribeUrl}`
 }
 
 /**
@@ -39,7 +33,6 @@ export function generateComplianceFooter(physicalAddress: string, unsubscribeUrl
 export function generateComplianceFooterHtml(physicalAddress: string, unsubscribeUrl: string): string {
   const rawAddress = physicalAddress?.trim() || '[Physical address not configured]'
   const address = rawAddress.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  return `<br><hr style="border:none;border-top:1px solid #ddd;margin:16px 0">
-<p style="color:#999;font-size:12px">${address}<br>
+  return `<br><p style="color:#999;font-size:12px;border-top:1px solid #eee;padding-top:8px;margin-top:16px">${address}<br>
 <a href="${unsubscribeUrl}" style="color:#999">Unsubscribe</a></p>`
 }

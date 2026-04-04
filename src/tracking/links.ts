@@ -59,7 +59,9 @@ export async function replaceLinksWithTracking(
     if (seenUrls.has(url)) continue
     seenUrls.add(url)
 
-    const linkId = crypto.randomUUID().replace(/-/g, '')
+    // 8 字符短 ID（4 字节 hex），10 万条以内碰撞概率可忽略
+    const linkId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      .map(b => b.toString(16).padStart(2, '0')).join('')
     linkIds.push(linkId)
 
     stmts.push(
@@ -157,7 +159,9 @@ export async function replaceLinksWithTrackingDual(
     if (seenUrls.has(url)) continue
     seenUrls.add(url)
 
-    const linkId = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+    // 8 字符短 ID（4 字节 hex），10 万条以内碰撞概率可忽略
+    const linkId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      .map(b => b.toString(16).padStart(2, '0')).join('')
     linkIds.push(linkId)
 
     stmts.push(
