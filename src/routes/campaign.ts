@@ -286,6 +286,14 @@ async function startCampaign(id: string, env: Env): Promise<Response> {
     return json({ error: 'CAN-SPAM compliance requires a physical mailing address. Update campaign with physical_address.' }, 400)
   }
 
+  // Agent engine requires knowledge base to be ready
+  if (campaign.engine === 'agent' && !['ready', 'manual'].includes(campaign.knowledge_base_status)) {
+    return json({
+      error: `Cannot start agent campaign: knowledge base is '${campaign.knowledge_base_status}'. ` +
+             `Generate or manually set the knowledge base first.`,
+    }, 400)
+  }
+
   const now = new Date().toISOString()
 
   if (campaign.engine === 'agent') {
