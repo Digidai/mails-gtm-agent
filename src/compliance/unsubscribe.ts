@@ -16,17 +16,6 @@ async function hmacSign(data: string, secret: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(signature))
 }
 
-async function hmacVerify(data: string, signature: string, secret: string): Promise<boolean> {
-  const expected = await hmacSign(data, secret)
-  // Constant-time comparison to prevent timing attacks
-  if (expected.length !== signature.length) return false
-  let diff = 0
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i)
-  }
-  return diff === 0
-}
-
 function base64UrlEncode(data: Uint8Array | string): string {
   let bytes: Uint8Array
   if (typeof data === 'string') {
@@ -55,14 +44,13 @@ export async function generateUnsubscribeToken(
   campaignId: string,
   secret: string
 ): Promise<string> {
-  const payload: UnsubscribePayload = {
-    email,
-    campaign_id: campaignId,
-    exp: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60, // 1 year
-  }
+  // 用短字段名压缩 payload 长度
+  const payload = { e: email, c: campaignId, x: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60 }
   const payloadStr = base64UrlEncode(JSON.stringify(payload))
+  // 签名取前 16 字符，足够防篡改
   const sig = await hmacSign(payloadStr, secret)
-  return `${payloadStr}.${sig}`
+  const shortSig = sig.slice(0, 16)
+  return `${payloadStr}.${shortSig}`
 }
 
 export async function verifyUnsubscribeToken(
@@ -73,11 +61,24 @@ export async function verifyUnsubscribeToken(
   if (parts.length !== 2) return null
 
   const [payloadStr, sig] = parts
-  const valid = await hmacVerify(payloadStr, sig, secret)
-  if (!valid) return null
+  // 签名只比较前 16 字符（与生成时一致）
+  const expectedFull = await hmacSign(payloadStr, secret)
+  const expectedShort = expectedFull.slice(0, 16)
+  if (sig.length !== expectedShort.length) return null
+  let diff = 0
+  for (let i = 0; i < sig.length; i++) {
+    diff |= sig.charCodeAt(i) ^ expectedShort.charCodeAt(i)
+  }
+  if (diff !== 0) return null
 
   try {
-    const payload = JSON.parse(base64UrlDecode(payloadStr)) as UnsubscribePayload
+    const raw = JSON.parse(base64UrlDecode(payloadStr))
+    // 支持短字段名 (e/c/x) 和旧格式 (email/campaign_id/exp)
+    const payload: UnsubscribePayload = {
+      email: raw.e || raw.email,
+      campaign_id: raw.c || raw.campaign_id,
+      exp: raw.x || raw.exp,
+    }
     if (payload.exp < Math.floor(Date.now() / 1000)) return null
     if (!payload.email || !payload.campaign_id) return null
     return payload
