@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'bun:test'
-import { makeDecision } from '../../src/agent/decide'
+import { makeDecision, buildSystemPrompt, EMAIL_FRAMEWORKS } from '../../src/agent/decide'
 import { Env, Campaign, CampaignContact, Event, KnowledgeBase } from '../../src/types'
 import { createProvider } from '../../src/llm/provider'
 
@@ -292,5 +292,51 @@ describe('Agent Decision Engine', () => {
 
     expect(result.action).toBe('wait')
     expect(result.wait_days).toBe(3)
+  })
+
+  test('buildSystemPrompt includes Email Framework section', () => {
+    const prompt = buildSystemPrompt(
+      mockCampaign(),
+      mockContact(),
+      [],
+      mockKb,
+    )
+    expect(prompt).toContain('## Email Framework (MANDATORY')
+    expect(prompt).toContain('## Opening Style (MANDATORY)')
+    expect(prompt).toContain('## CTA Style (MANDATORY)')
+    expect(prompt).toContain('CRITICAL: You MUST follow the framework')
+    // Verify the framework id is one of the known frameworks
+    const frameworkIds = EMAIL_FRAMEWORKS.map(f => f.id)
+    const match = prompt.match(/Framework: (\w+)/)
+    expect(match).not.toBeNull()
+    expect(frameworkIds).toContain(match![1])
+  })
+
+  test('buildSystemPrompt includes subject uniqueness rule', () => {
+    const prompt = buildSystemPrompt(
+      mockCampaign(),
+      mockContact(),
+      [],
+      mockKb,
+    )
+    expect(prompt).toContain('Subject line MUST be unique and specific')
+    expect(prompt).toContain('NEVER use generic subjects')
+  })
+
+  test('buildSystemPrompt produces different frameworks across multiple calls', () => {
+    const frameworkIds = new Set<string>()
+    // Call enough times to get diversity (with 6 frameworks, 10 calls is very likely to hit >=2)
+    for (let i = 0; i < 10; i++) {
+      const prompt = buildSystemPrompt(
+        mockCampaign(),
+        mockContact(),
+        [],
+        mockKb,
+      )
+      const match = prompt.match(/Framework: (\w+)/)
+      if (match) frameworkIds.add(match[1])
+    }
+    // At least 2 different frameworks out of 10 calls
+    expect(frameworkIds.size).toBeGreaterThanOrEqual(2)
   })
 })
