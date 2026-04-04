@@ -130,7 +130,7 @@ export async function makeDecision(
         // Fix banned CTA phrases
         parsed.email.body = parsed.email.body
           .replace(/Worth trying on your next project\?/gi, '')
-          .replace(/Check it out:/gi, '')
+          .replace(/Check it out[^.]*[.:]/gi, '')
           .replace(/Take a look:/gi, '')
           .replace(/Worth a look:/gi, '')
           .replace(/Reply if you want me to set up a test mailbox[^.]*[.?]?\s*/gi, '')
@@ -146,11 +146,21 @@ export async function makeDecision(
           .replace(/\bWe built\b/g, `${campaign.product_name} is`)
           .replace(/\bI built\b/g, `${campaign.product_name} is`)
 
-        // Fix feature enumeration: "send, receive, and search/extract" → keep only the last item
+        // Remove bullet point lists (• or - at start of line)
         parsed.email.body = parsed.email.body
-          .replace(/send,?\s*receive,?\s*(and\s+)?(search|extract|handle)[^.]*\./gi, (match: string) => {
-            // Extract the last verb phrase and rebuild
-            const lastFeature = match.match(/(extract verification codes|search emails|handle email|auto-extract[^.]*)/i)
+          .replace(/\n[•\-\*]\s+[^\n]+/g, '')
+          .replace(/Key (features|benefits)[^:]*:\s*/gi, '')
+          .trim()
+
+        // Fix feature enumeration: "send, receive, and X" → keep only the last item
+        parsed.email.body = parsed.email.body
+          .replace(/send[,/]\s*receive[,/]?\s*(and\s+)?(search|extract|handle|auto-extract)[^.]*\./gi, (match: string) => {
+            const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search emails|handle email)/i)
+            return lastFeature ? `${lastFeature[0]}.` : match
+          })
+          // Also catch "send emails (with attachments), receive and store..." patterns
+          .replace(/send emails[^.]*,\s*receive[^.]*,\s*(and\s+)?[^.]*\./gi, (match: string) => {
+            const lastFeature = match.match(/(extract verification codes|auto-extract[^.]*|search[^.]*)/i)
             return lastFeature ? `${lastFeature[0]}.` : match
           })
 
@@ -164,6 +174,14 @@ export async function makeDecision(
             return word
           })
           .join(' ')
+
+        // Fix greeting: use first name only, not full name
+        const firstName = (contact.name || '').split(' ')[0] || contact.name || ''
+        if (firstName) {
+          parsed.email.body = parsed.email.body
+            .replace(new RegExp(`^(Hi|Hey|Hello)\\s+${contact.name?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,`, 'i'),
+              `$1 ${firstName},`)
+        }
 
         // Enforce sentence count: keep max 4 sentences (greeting + 3 body)
         const bodyWithoutGreeting = parsed.email.body.replace(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i, '')
@@ -393,7 +411,7 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 
 ## Writing Style (CRITICAL)
 - Write like a real person, not a sales bot. Short, direct, no fluff.
-- ALWAYS start with "Hi ${contactName}," or "Hey ${contactName}," on its own line. Every cold email needs a greeting.
+- ALWAYS start with "Hi ${(contact.name || '').split(' ')[0] || contactName}," or "Hey ${(contact.name || '').split(' ')[0] || contactName}," on its own line. Use FIRST NAME only, not full name. Every cold email needs a greeting.
 - Pick ONE single feature or benefit. Do NOT enumerate multiple features. Bad: "send, receive, search, and extract codes". Good: "auto-extracts verification codes from incoming emails". Mention ONE thing, not a list.
 - NEVER use "We built" or "I built" as a sentence opener. You can say the product name directly.
 - NEVER use these AI filler phrases: "Great question!", "Absolutely!", "Sure!", "I'd be happy to", "Totally understand", "That's a great point"
