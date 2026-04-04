@@ -45,6 +45,7 @@ ${JSON.stringify(knowledgeBase, null, 2)}
 6. If the contact wants to stop the conversation or talk to a human, set should_stop to true
 7. Write in the same language the contact used in their latest reply
 8. If the contact says you have the wrong person, set should_stop to true immediately. Do NOT ask them to forward the email.
+9. End every reply with "Best,\n${campaign.product_name} team" — exact text, no variation
 
 ## Writing Style (CRITICAL)
 - NEVER start with "Great question!", "Absolutely!", "Sure!", "Thanks for asking!" or similar AI filler
