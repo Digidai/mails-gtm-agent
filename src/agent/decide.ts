@@ -124,6 +124,32 @@ export async function makeDecision(
         if (!parsed.email.angle) {
           parsed.email.angle = 'general'
         }
+
+        // Post-processing: enforce quality rules the LLM might ignore
+        const bodyLower = parsed.email.body.toLowerCase()
+        const subjectLower = parsed.email.subject.toLowerCase()
+
+        // Fix banned CTA phrases
+        parsed.email.body = parsed.email.body
+          .replace(/Worth trying on your next project\?/gi, '')
+          .replace(/Check it out:/gi, '')
+          .replace(/Take a look:/gi, '')
+          .replace(/Worth a look:/gi, '')
+          .trim()
+
+        // Fix banned opening phrases — remove "Most developers..." style openings
+        parsed.email.body = parsed.email.body
+          .replace(/^Most (developers|teams|dev tools teams|companies|people)\b[^.]*\.\s*/i, '')
+          .trim()
+
+        // Enforce sentence count: split by period/question/exclamation, keep max 4
+        const sentences = parsed.email.body
+          .split(/(?<=[.!?])\s+/)
+          .filter(s => s.trim().length > 0)
+        if (sentences.length > 5) {
+          // Keep first 4 sentences
+          parsed.email.body = sentences.slice(0, 4).join(' ')
+        }
       }
 
       // Default wait_days
@@ -210,11 +236,14 @@ const OPENING_STYLES = [
 ]
 
 const CTA_STYLES = [
-  'End with a question (e.g., "Worth trying on your next project?")',
-  'Drop the link after a relevant sentence without any intro phrase',
-  'Suggest a specific first action (e.g., "Try `mails claim [their-company]` and see")',
-  'Ask for their take (e.g., "Curious what you think: [link]")',
-  'Frame it as a time-saver (e.g., "Saves about 2 hours of SMTP setup: [link]")',
+  'Drop the link naturally mid-sentence, not at the end on its own line',
+  'Suggest a specific first action with their company name (e.g., "Try `mails claim acme` and see")',
+  'Ask a yes/no question, then link (e.g., "Want to test it? [link]")',
+  'Frame it as time saved (e.g., "Saves a weekend of SMTP wiring: [link]")',
+  'End with what they will see after clicking (e.g., "You can have a working mailbox in 30 seconds: [link]")',
+  'Make it about their specific use case (e.g., "For [company]\'s verification flow: [link]")',
+  'Just place the link after your last sentence with no intro phrase at all',
+  'Invite them to reply instead of clicking (e.g., "Reply if you want me to set up a test mailbox")',
 ]
 
 /** Exported for testing only */
@@ -325,7 +354,7 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 4. If they replied "not interested" or "unsubscribe", stop immediately
 5. Do NOT repeat the same angle/approach as a previous email
 6. Every email MUST include the conversion link: ${campaign.conversion_url || '(not set)'}
-7. Keep emails concise (max 4 sentences), professional, and value-driven
+7. STRICT: Email body MUST be 2-4 sentences total. Not 5, not 6. Count your sentences before outputting. One short paragraph.
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
 10. End every email with exactly "Best,\n${campaign.product_name} team" — use this EXACT text, do not capitalize differently or change wording. Do NOT add footer, unsubscribe link, or physical address (those are added automatically)
@@ -341,7 +370,8 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 - Sound like a short note from a developer, not a marketing email
 - VARY your call-to-action phrasing. Do NOT reuse "Worth a look", "Check it out", "Take a look" across emails. Use different phrasings: ask a question, describe a benefit, give a specific use case, or just drop the link naturally after a relevant sentence.
 - Do NOT list features, commands, or steps in separate lines. If you mention a command, weave it into a sentence naturally (e.g., "You can get started with npm install -g mails-agent").
-- NEVER start with generic pain-point statements like "Most developers struggle with...", "Teams often face...", "Building X is hard...". Instead, be specific: mention the contact's actual company, role, or a concrete scenario relevant to them.
+- NEVER start with generic pain-point statements. Banned openings include: "Most developers...", "Most teams...", "Most dev tools teams...", "Teams often...", "Building X is hard...", "If you're building...", "Are you building...". Instead, lead with something SPECIFIC to this contact — their company name, their role, a concrete scenario at their company.
+- STRICT LENGTH: Your email body MUST be 2-4 sentences. Count them. If you wrote more than 4 sentences, delete sentences until you have 4 or fewer. One paragraph, no line breaks between sentences.
 
 ## Email Framework (MANDATORY — follow this structure)
 Framework: ${framework.id}
@@ -356,6 +386,15 @@ ${openingStyle}
 ${ctaStyle}
 
 CRITICAL: You MUST follow the framework, opening style, and CTA style above. These are randomly assigned to ensure every email is different. Do not default to your preferred pattern.
+
+## Banned Phrases (automatic rejection if found)
+Your email will be REJECTED and regenerated if it contains any of these:
+- "Most developers...", "Most teams...", "Most dev tools..."
+- "Worth trying on your next project?"
+- "Check it out:", "Take a look:", "Worth a look:"
+- "Building AI agents that need to..."
+- "struggle with", "hit a wall", "end up building"
+- "Email infrastructure for [your] AI agents" as subject line
 
 ## Decision
 Return ONLY valid JSON:
