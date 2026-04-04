@@ -126,8 +126,6 @@ export async function makeDecision(
         }
 
         // Post-processing: enforce quality rules the LLM might ignore
-        const bodyLower = parsed.email.body.toLowerCase()
-        const subjectLower = parsed.email.subject.toLowerCase()
 
         // Fix banned CTA phrases
         parsed.email.body = parsed.email.body
@@ -135,21 +133,53 @@ export async function makeDecision(
           .replace(/Check it out:/gi, '')
           .replace(/Take a look:/gi, '')
           .replace(/Worth a look:/gi, '')
+          .replace(/Reply if you want me to set up a test mailbox[^.]*[.?]?\s*/gi, '')
           .trim()
 
-        // Fix banned opening phrases — remove "Most developers..." style openings
+        // Fix banned opening phrases
         parsed.email.body = parsed.email.body
           .replace(/^Most (developers|teams|dev tools teams|companies|people)\b[^.]*\.\s*/i, '')
           .trim()
 
-        // Enforce sentence count: split by period/question/exclamation, keep max 4
-        const sentences = parsed.email.body
+        // Fix "We built" sentence openers → rephrase to product name
+        parsed.email.body = parsed.email.body
+          .replace(/\bWe built\b/g, `${campaign.product_name} is`)
+          .replace(/\bI built\b/g, `${campaign.product_name} is`)
+
+        // Fix feature enumeration: "send, receive, and search/extract" → keep only the last item
+        parsed.email.body = parsed.email.body
+          .replace(/send,?\s*receive,?\s*(and\s+)?(search|extract|handle)[^.]*\./gi, (match: string) => {
+            // Extract the last verb phrase and rebuild
+            const lastFeature = match.match(/(extract verification codes|search emails|handle email|auto-extract[^.]*)/i)
+            return lastFeature ? `${lastFeature[0]}.` : match
+          })
+
+        // Fix subject capitalization: ensure first letter of each word > 3 chars is uppercase
+        parsed.email.subject = parsed.email.subject
+          .split(' ')
+          .map((word: string, i: number) => {
+            if (i === 0 || word.length > 3) {
+              return word.charAt(0).toUpperCase() + word.slice(1)
+            }
+            return word
+          })
+          .join(' ')
+
+        // Enforce sentence count: keep max 4 sentences (greeting + 3 body)
+        const bodyWithoutGreeting = parsed.email.body.replace(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i, '')
+        const sentences = bodyWithoutGreeting
           .split(/(?<=[.!?])\s+/)
           .filter((s: string) => s.trim().length > 0)
-        if (sentences.length > 5) {
-          // Keep first 4 sentences
-          parsed.email.body = sentences.slice(0, 4).join(' ')
+        if (sentences.length > 4) {
+          const greeting = parsed.email.body.match(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i)?.[0] || ''
+          parsed.email.body = greeting + sentences.slice(0, 3).join(' ')
         }
+
+        // Ensure link is not on its own line — merge it into last sentence
+        parsed.email.body = parsed.email.body
+          .replace(/\n\n?(https?:\/\/\S+)\s*$/m, ' $1')
+          .replace(/\n\n?(https?:\/\/\S+)\n/m, ' $1 ')
+          .trim()
       }
 
       // Default wait_days
@@ -354,7 +384,7 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 4. If they replied "not interested" or "unsubscribe", stop immediately
 5. Do NOT repeat the same angle/approach as a previous email
 6. Every email MUST include the conversion link: ${campaign.conversion_url || '(not set)'}
-7. STRICT: Email body MUST be 2-4 sentences total. Not 5, not 6. Count your sentences before outputting. One short paragraph.
+7. STRICT: Email body MUST be 2-3 sentences after the greeting line. Not 4, not 5. Count them. One short paragraph, no line breaks within.
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
 10. End every email with exactly "Best,\n${campaign.product_name} team" — use this EXACT text, do not capitalize differently or change wording. Do NOT add footer, unsubscribe link, or physical address (those are added automatically)
@@ -363,15 +393,17 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 
 ## Writing Style (CRITICAL)
 - Write like a real person, not a sales bot. Short, direct, no fluff.
-- VARY your opening. Do NOT always start with "Saw you're [role] at [company]". Use different approaches: ask a question, mention a pain point, share a quick insight, or lead with the product benefit.
+- ALWAYS start with "Hi ${contactName}," or "Hey ${contactName}," on its own line. Every cold email needs a greeting.
+- Pick ONE single feature or benefit. Do NOT enumerate multiple features. Bad: "send, receive, search, and extract codes". Good: "auto-extracts verification codes from incoming emails". Mention ONE thing, not a list.
+- NEVER use "We built" or "I built" as a sentence opener. You can say the product name directly.
 - NEVER use these AI filler phrases: "Great question!", "Absolutely!", "Sure!", "I'd be happy to", "Totally understand", "That's a great point"
 - NEVER use exclamation marks more than once per email
-- Do NOT list features in bullet points. Pick ONE relevant angle and talk about it naturally.
 - Sound like a short note from a developer, not a marketing email
-- VARY your call-to-action phrasing. Do NOT reuse "Worth a look", "Check it out", "Take a look" across emails. Use different phrasings: ask a question, describe a benefit, give a specific use case, or just drop the link naturally after a relevant sentence.
-- Do NOT list features, commands, or steps in separate lines. If you mention a command, weave it into a sentence naturally (e.g., "You can get started with npm install -g mails-agent").
-- NEVER start with generic pain-point statements. Banned openings include: "Most developers...", "Most teams...", "Most dev tools teams...", "Teams often...", "Building X is hard...", "If you're building...", "Are you building...". Instead, lead with something SPECIFIC to this contact — their company name, their role, a concrete scenario at their company.
-- STRICT LENGTH: Your email body MUST be 2-4 sentences. Count them. If you wrote more than 4 sentences, delete sentences until you have 4 or fewer. One paragraph, no line breaks between sentences.
+- Do NOT list features, commands, or steps in separate lines. If you mention a command, weave it into a sentence naturally.
+- NEVER start with generic pain-point statements. Banned: "Most developers...", "Most teams...", "Teams often...", "Building X is hard...", "If you're building...", "Are you building..."
+- Do NOT fabricate user stories or case studies. Only reference real, verifiable facts from the product knowledge base.
+- Subject line: use proper capitalization (Title Case or Sentence case). Do NOT write all-lowercase subjects.
+- STRICT LENGTH: Email body MUST be 2-3 sentences after the greeting. One short paragraph. No line breaks between sentences. The link should be woven into a sentence, NOT on its own line.
 
 ## Email Framework (MANDATORY — follow this structure)
 Framework: ${framework.id}
@@ -395,6 +427,10 @@ Your email will be REJECTED and regenerated if it contains any of these:
 - "Building AI agents that need to..."
 - "struggle with", "hit a wall", "end up building"
 - "Email infrastructure for [your] AI agents" as subject line
+- "We built" or "I built" as sentence opener
+- "send, receive, and [search/extract]" (feature enumeration)
+- "send/receive" (slash-separated feature lists)
+- "Reply if you want me to set up a test mailbox" (overused CTA)
 
 ## Decision
 Return ONLY valid JSON:
