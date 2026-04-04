@@ -159,7 +159,8 @@ describe('CSV Import - row count limit', () => {
 
   test('default MAX_CONTACTS_PER_IMPORT is 10000', () => {
     // Verify the default parsing logic matches what importContacts does
-    const parsed = parseInt(undefined || '10000', 10)
+    const envVal: string | undefined = undefined
+    const parsed = parseInt(envVal || '10000', 10)
     expect(parsed).toBe(10000)
   })
 })

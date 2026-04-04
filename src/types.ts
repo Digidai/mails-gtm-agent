@@ -14,7 +14,7 @@ export interface Env {
   UNSUBSCRIBE_BASE_URL: string // default: https://mails-gtm-agent.YOUR.workers.dev
   DAILY_SEND_LIMIT: string    // default: "100"
   MAX_CSV_SIZE: string        // default: "5242880" (5MB)
-  MAX_CONTACTS_PER_IMPORT: string  // default: "10000"
+  MAX_CONTACTS_PER_IMPORT?: string  // default: "10000"
 }
 
 export interface Campaign {
@@ -42,7 +42,7 @@ export interface Campaign {
   max_emails: number
   min_interval_days: number
   webhook_secret: string | null
-  webhook_callback_url: string | null
+  webhook_callback_url?: string | null
   dry_run: number
   daily_llm_calls: number
   daily_llm_limit: number
