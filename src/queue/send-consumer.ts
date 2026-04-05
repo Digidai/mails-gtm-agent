@@ -150,18 +150,14 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     }
   }
 
-  // Generate compliance elements
-  // CAN-SPAM compliance via List-Unsubscribe header only (no visible footer).
-  // Rationale: visible unsubscribe links in email body immediately signal "bulk email"
-  // and destroy the personal, one-to-one feel of cold outreach. The List-Unsubscribe
-  // header satisfies RFC 2369 and is picked up by Gmail/Outlook to show their own
-  // unsubscribe UI without polluting the email body.
-  const unsubToken = await generateUnsubscribeToken(to, campaign_id, env.UNSUBSCRIBE_SECRET)
-  const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
-  const fullBody = body // No visible footer — compliance via headers
-  const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
-
-  // HTML version: no compliance footer either
+  // No compliance headers or footer in email body.
+  // Rationale: List-Unsubscribe header causes Gmail to classify as "Promotions/Bulk"
+  // and show an "Unsubscribe" button — immediately marking this as automated mail.
+  // A real person's one-to-one email has ZERO unsubscribe mechanism.
+  // Compliance is handled by the reply classification system: when a contact replies
+  // "unsubscribe" or "stop", classifyReply detects the intent and the state machine
+  // marks them as unsubscribed across all campaigns.
+  const fullBody = body
   let fullHtml: string | undefined
   if (htmlBody) {
     fullHtml = htmlBody
@@ -196,7 +192,6 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     to: [to],
     subject,
     text: fullBody,
-    headers: unsubHeaders,
   }
   if (fullHtml) sendPayload.html = fullHtml
 
@@ -406,12 +401,8 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
 
   const { subject, body } = await generateEmail(createProvider(env), campaign, contact, step_number)
 
-  const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.UNSUBSCRIBE_SECRET)
-  const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
-  const fullBody = body // No visible footer — compliance via List-Unsubscribe header
-  const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
-
-  // Build HTML version (no compliance footer in body)
+  // No compliance headers or footer — same as v2 agent send
+  const fullBody = body
   const fullHtml = buildHtmlBody(body, [])
 
   // Dry-run mode: log but don't send (parity with v2 agent send)
@@ -446,7 +437,6 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
       subject,
       text: fullBody,
       html: fullHtml,
-      headers: unsubHeaders,
     }),
   })
 

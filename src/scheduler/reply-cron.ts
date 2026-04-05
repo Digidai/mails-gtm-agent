@@ -7,8 +7,8 @@ import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 import { recordContactMessage, recordAgentMessage, getConversationHistory } from '../conversations/context'
-import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
-import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
+// Unsubscribe token/URL no longer needed in replies
+// Compliance headers/footer no longer used in replies — real person replies don't have them
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
 import { claimLlmQuota } from '../utils/llm-quota'
@@ -762,11 +762,9 @@ export async function sendAutoReply(
     }
   }
 
-  // Generate compliance elements
-  const unsubToken = await generateUnsubscribeToken(contact.email, campaign.id, env.UNSUBSCRIBE_SECRET)
-  const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
-  const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
-  Object.assign(headers, unsubHeaders)
+  // No List-Unsubscribe header — real person replies don't have unsubscribe headers.
+  // Unsubscribe is handled by reply classification: if contact replies "stop" or
+  // "unsubscribe", classifyReply detects the intent and state machine processes it.
 
   // Fix #6: Replace links with tracking and build HTML version
   let htmlBody: string | undefined
