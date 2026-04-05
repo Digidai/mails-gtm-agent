@@ -601,6 +601,11 @@ export async function processAutoReply(
       'No rush at all. I will check back with you then.',
       'Makes sense. I will follow up when the timing is better.',
       'Understood. Will reach out again down the road.',
+      'Sure thing. Ping me whenever you are ready.',
+      'No worries. I will circle back later.',
+      'Sounds good, I will reach out in a few weeks.',
+      'Got it. Happy to reconnect when the time is right.',
+      'Totally fair. I will be here when you are ready to take another look.',
     ]
     const notNowMsg = NOT_NOW_REPLIES[Math.floor(Math.random() * NOT_NOW_REPLIES.length)]
     try {
@@ -829,9 +834,12 @@ export async function sendFinalMessage(
   const GOODBYE_VARIANTS = [
     'Thanks for letting me know. No worries at all.',
     'Got it, appreciate you taking the time to reply.',
-    'Understood. If things change down the road, you know where to find us.',
-    'No problem. Wishing you and the team all the best.',
-    'Thanks for the reply. I will not follow up further.',
+    'Understood, all the best.',
+    'No problem. Cheers.',
+    'Thanks for the reply. Have a good one.',
+    'Fair enough. Best of luck with everything.',
+    'Got it. Thanks for your time.',
+    'Understood. Take care.',
   ]
   const finalMsg = GOODBYE_VARIANTS[Math.floor(Math.random() * GOODBYE_VARIANTS.length)]
 
