@@ -52,7 +52,7 @@ export interface Campaign {
   max_auto_replies: number
 
   // v2.3 fields
-  sender_name: string | null
+  sender_name?: string | null
 
   created_at: string
   updated_at: string
