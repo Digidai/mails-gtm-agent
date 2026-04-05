@@ -155,7 +155,7 @@ export async function handleInboundWebhook(
            c.product_url as _product_url, c.product_name as _product_name,
            c.max_auto_replies as _max_auto_replies, c.from_email as _from_email,
            c.physical_address as _physical_address, c.product_description as _product_description,
-           c.dry_run as _dry_run
+           c.dry_run as _dry_run, c.sender_name as _sender_name
     FROM campaign_contacts cc
     JOIN campaigns c ON c.id = cc.campaign_id
     WHERE cc.email = ? AND c.status = 'active'
@@ -178,6 +178,7 @@ export async function handleInboundWebhook(
     _physical_address: string
     _product_description: string
     _dry_run: number
+    _sender_name: string | null
   }>()
 
   if (!contacts.results?.length) {
@@ -239,6 +240,7 @@ export async function handleInboundWebhook(
         knowledge_base: contact._kb,
         max_auto_replies: contact._max_auto_replies ?? 5,
         dry_run: contact._dry_run ?? 0,
+        sender_name: contact._sender_name || null,
       } as Campaign
 
       // Record reply event

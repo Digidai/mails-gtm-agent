@@ -55,10 +55,11 @@ describe('Unsubscribe URL', () => {
 })
 
 describe('List-Unsubscribe Headers', () => {
-  test('generates RFC 8058 headers', () => {
+  test('generates List-Unsubscribe header without Post (avoids Gmail bulk classification)', () => {
     const headers = generateListUnsubscribeHeaders('https://example.com/unsubscribe?token=abc')
     expect(headers['List-Unsubscribe']).toBe('<https://example.com/unsubscribe?token=abc>')
-    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
+    // List-Unsubscribe-Post is intentionally omitted to avoid Gmail bulk classification
+    expect(headers['List-Unsubscribe-Post']).toBeUndefined()
   })
 })
 
