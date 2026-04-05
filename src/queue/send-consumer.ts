@@ -151,15 +151,20 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
   }
 
   // Generate compliance elements
+  // CAN-SPAM compliance via List-Unsubscribe header only (no visible footer).
+  // Rationale: visible unsubscribe links in email body immediately signal "bulk email"
+  // and destroy the personal, one-to-one feel of cold outreach. The List-Unsubscribe
+  // header satisfies RFC 2369 and is picked up by Gmail/Outlook to show their own
+  // unsubscribe UI without polluting the email body.
   const unsubToken = await generateUnsubscribeToken(to, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
-  const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  const fullBody = body // No visible footer — compliance via headers
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
-  // Build HTML version (tracked links in <a> tags + clean footer)
+  // HTML version: no compliance footer either
   let fullHtml: string | undefined
   if (htmlBody) {
-    fullHtml = htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+    fullHtml = htmlBody
   }
 
   // Dry-run mode: log but don't send
@@ -403,11 +408,11 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
 
   const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
-  const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  const fullBody = body // No visible footer — compliance via List-Unsubscribe header
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
-  // Build HTML version with clean footer (v1 has no tracked links, just clean unsubscribe)
-  const fullHtml = buildHtmlBody(body, []) + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+  // Build HTML version (no compliance footer in body)
+  const fullHtml = buildHtmlBody(body, [])
 
   // Dry-run mode: log but don't send (parity with v2 agent send)
   if (campaign.dry_run) {

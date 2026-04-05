@@ -782,14 +782,10 @@ export async function sendAutoReply(
     htmlBody = html
   }
 
-  // Add compliance footer only on first reply (subsequent replies omit it for natural conversation)
-  const includeFooter = !options?.skipComplianceFooter
-  const fullBody = includeFooter
-    ? replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
-    : replyBody
-  const fullHtml = htmlBody
-    ? (includeFooter ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl) : htmlBody)
-    : undefined
+  // No visible compliance footer in reply body — compliance via List-Unsubscribe header.
+  // A real person replying to an email would never add a physical address or unsubscribe link.
+  const fullBody = replyBody
+  const fullHtml = htmlBody || undefined
 
   // Dry-run mode: log but don't actually send
   if (campaign.dry_run) {
