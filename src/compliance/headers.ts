@@ -1,7 +1,9 @@
 /**
- * Generate RFC 8058 List-Unsubscribe headers.
- * Includes both HTTPS URL (for one-click) and mailto (for legacy clients / Gmail compatibility).
- * RFC 8058 requires List-Unsubscribe-Post alongside the HTTPS URL for one-click unsubscribe.
+ * Generate List-Unsubscribe header.
+ * Only includes List-Unsubscribe (URL), NOT List-Unsubscribe-Post.
+ * Reason: List-Unsubscribe-Post triggers Gmail to show an "Unsubscribe" button
+ * and classify the message as bulk/promotional mail — fatal for cold outreach
+ * deliverability.
  */
 export function generateListUnsubscribeHeaders(unsubscribeUrl: string, mailtoAddress?: string): Record<string, string> {
   const urls = mailtoAddress
@@ -10,7 +12,7 @@ export function generateListUnsubscribeHeaders(unsubscribeUrl: string, mailtoAdd
 
   return {
     'List-Unsubscribe': urls,
-    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    // Intentionally omitting List-Unsubscribe-Post to avoid Gmail bulk classification
   }
 }
 

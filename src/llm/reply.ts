@@ -31,6 +31,11 @@ export async function generateReply(
 
   // Fix #3: Move untrusted content (conversation history + latest reply) to user prompt
   // to reduce prompt injection attack surface. System prompt contains only trusted instructions.
+  // Derive sender persona name: campaign.sender_name > from_email local part > product_name
+  const senderName = campaign.sender_name
+    || campaign.from_email?.split('@')[0]?.replace(/[._-]/g, ' ')?.replace(/\b\w/g, (c: string) => c.toUpperCase())
+    || campaign.product_name
+
   const systemPrompt = `You are the SDR Agent for ${campaign.product_name}. You are having an email conversation.
 
 ## Product Knowledge Base
@@ -45,7 +50,7 @@ ${JSON.stringify(knowledgeBase, null, 2)}
 6. If the contact wants to stop the conversation or talk to a human, set should_stop to true
 7. Write in the same language the contact used in their latest reply
 8. If the contact says you have the wrong person, set should_stop to true immediately. Do NOT ask them to forward the email.
-9. End every reply with "Best,\n${campaign.product_name} team" — exact text, no variation
+9. End every reply with "Best,\n${senderName}" — sign as a real person, not a team. Exact text, no variation
 
 ## Writing Style (CRITICAL)
 - NEVER start with "Great question!", "Absolutely!", "Sure!", "Thanks for asking!" or similar AI filler

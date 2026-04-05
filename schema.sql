@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   daily_llm_limit INTEGER NOT NULL DEFAULT 100,
   daily_llm_reset_at TEXT,
   max_auto_replies INTEGER NOT NULL DEFAULT 5,
+  sender_name TEXT,
 
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -181,3 +182,18 @@ CREATE TABLE IF NOT EXISTS processed_messages (
   contact_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- v2.3: Scheduled auto-replies for human-like delay (2-8 hours)
+CREATE TABLE IF NOT EXISTS scheduled_replies (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  campaign_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  reply_body TEXT NOT NULL,
+  reply_subject TEXT NOT NULL,
+  original_msg_id TEXT,
+  original_subject TEXT,
+  send_at TEXT NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_replies_send ON scheduled_replies(sent, send_at);

@@ -280,7 +280,9 @@ async function processEvaluateMessage(
 
     case 'wait': {
       const waitDays = decision.wait_days || 3
-      const nextCheck = new Date(Date.now() + waitDays * 24 * 60 * 60 * 1000).toISOString()
+      // Add random jitter +/-24h to avoid machine-like regularity
+      const jitterHours = (Math.random() * 48 - 24) // -24h to +24h
+      const nextCheck = new Date(Date.now() + (waitDays * 24 + jitterHours) * 60 * 60 * 1000).toISOString()
       await updateContactStatus(env.DB, contact_id, 'active', { next_check_at: nextCheck })
       break
     }

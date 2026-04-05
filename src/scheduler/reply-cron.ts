@@ -185,7 +185,7 @@ async function _replyCron(env: Env): Promise<void> {
              c.product_url as _product_url, c.product_name as _product_name,
              c.max_auto_replies as _max_auto_replies, c.from_email as _from_email,
              c.physical_address as _physical_address, c.product_description as _product_description,
-             c.dry_run as _dry_run
+             c.dry_run as _dry_run, c.sender_name as _sender_name
       FROM campaign_contacts cc
       JOIN campaigns c ON c.id = cc.campaign_id
       WHERE cc.email = ? AND c.status = 'active'
@@ -208,6 +208,7 @@ async function _replyCron(env: Env): Promise<void> {
       _physical_address: string
       _product_description: string
       _dry_run: number
+      _sender_name: string | null
     }>()
 
     if (!contacts.results?.length) {
@@ -300,6 +301,7 @@ async function _replyCron(env: Env): Promise<void> {
           knowledge_base: contact._kb,
           max_auto_replies: contact._max_auto_replies ?? 5,
           dry_run: contact._dry_run ?? 0,
+          sender_name: contact._sender_name || null,
         } as Campaign
 
         // Record reply event (include msg_id for dedup)
@@ -525,6 +527,40 @@ export async function handleIntent(
 }
 
 /**
+ * Schedule a reply for delayed sending (2-8 hours) to avoid machine-like instant responses.
+ * Inserts into scheduled_replies table; the reply-send-cron picks it up when send_at arrives.
+ */
+async function scheduleReply(
+  env: Env,
+  campaignId: string,
+  contactId: string,
+  replyBody: string,
+  replySubject: string,
+  originalMsgId: string | null,
+  originalSubject: string | null,
+): Promise<void> {
+  // Random delay 2-8 hours to simulate human reply speed
+  const delayHours = 2 + Math.random() * 6
+  const sendAt = new Date(Date.now() + delayHours * 60 * 60 * 1000).toISOString()
+
+  await env.DB.prepare(
+    `INSERT INTO scheduled_replies (id, campaign_id, contact_id, reply_body, reply_subject, original_msg_id, original_subject, send_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    crypto.randomUUID().replace(/-/g, ''),
+    campaignId,
+    contactId,
+    replyBody,
+    replySubject,
+    originalMsgId || null,
+    originalSubject || null,
+    sendAt,
+  ).run()
+
+  console.log(`[reply-cron] Scheduled auto-reply for contact ${contactId} at ${sendAt} (${delayHours.toFixed(1)}h delay)`)
+}
+
+/**
  * v2.1: Generate a contextual reply and send it.
  */
 export async function processAutoReply(
@@ -559,7 +595,7 @@ export async function processAutoReply(
     return
   }
 
-  // For not_now: send a brief acknowledgment, do NOT call LLM (avoid should_stop risk).
+  // For not_now: schedule a brief acknowledgment, do NOT call LLM (avoid should_stop risk).
   if (intent === 'not_now') {
     const NOT_NOW_REPLIES = [
       'No rush at all. I will check back with you then.',
@@ -568,10 +604,10 @@ export async function processAutoReply(
     ]
     const notNowMsg = NOT_NOW_REPLIES[Math.floor(Math.random() * NOT_NOW_REPLIES.length)]
     try {
-      await sendAutoReply(env, campaign, contact, notNowMsg, originalMsg)
-      await recordAgentMessage(env, campaign.id, contact.id, notNowMsg, `Re: ${originalMsg.subject || 'Follow up'}`, null)
+      const replySubject = `Re: ${originalMsg.subject || 'Follow up'}`
+      await scheduleReply(env, campaign.id, contact.id, notNowMsg, replySubject, originalMsg.id || null, originalMsg.subject || null)
     } catch (err) {
-      console.error(`[reply-cron] not_now reply failed for ${contact.id}:`, err)
+      console.error(`[reply-cron] not_now reply scheduling failed for ${contact.id}:`, err)
     }
     return
   }
@@ -642,18 +678,9 @@ export async function processAutoReply(
     }
   }
 
-  // Send the generated reply
-  await sendAutoReply(env, campaign, contact, finalReplyBody, originalMsg)
-
-  // Record agent reply to conversations
-  await recordAgentMessage(
-    env,
-    campaign.id,
-    contact.id,
-    finalReplyBody,
-    `Re: ${originalMsg.subject || 'Follow up'}`,
-    null, // message_id filled after send — best effort
-  )
+  // Schedule the generated reply for delayed sending (2-8h human-like delay)
+  const replySubject = `Re: ${originalMsg.subject || 'Follow up'}`
+  await scheduleReply(env, campaign.id, contact.id, finalReplyBody, replySubject, originalMsg.id || null, originalMsg.subject || null)
 
   // auto_reply_count already atomically incremented above (Fix #3)
   // Check if we've now hit the limit
@@ -694,6 +721,7 @@ export async function sendAutoReply(
   contact: CampaignContact,
   replyBody: string,
   originalMsg: any,
+  options?: { skipComplianceFooter?: boolean },
 ): Promise<void> {
   // Fix #8: Build threading headers with proper References chain and case-insensitive header lookup
   const headers: Record<string, string> = {}
@@ -749,10 +777,13 @@ export async function sendAutoReply(
     htmlBody = html
   }
 
-  // Add compliance footer (text keeps original URLs, HTML has tracked <a> tags)
-  const fullBody = replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  // Add compliance footer only on first reply (subsequent replies omit it for natural conversation)
+  const includeFooter = !options?.skipComplianceFooter
+  const fullBody = includeFooter
+    ? replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+    : replyBody
   const fullHtml = htmlBody
-    ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+    ? (includeFooter ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl) : htmlBody)
     : undefined
 
   // Dry-run mode: log but don't actually send
@@ -787,7 +818,7 @@ export async function sendAutoReply(
 }
 
 /**
- * Send a final "goodbye" message and mark the contact as stopped.
+ * Schedule a final "goodbye" message and mark the contact as stopped.
  */
 export async function sendFinalMessage(
   env: Env,
@@ -805,20 +836,11 @@ export async function sendFinalMessage(
   const finalMsg = GOODBYE_VARIANTS[Math.floor(Math.random() * GOODBYE_VARIANTS.length)]
 
   try {
-    await sendAutoReply(env, campaign, contact, finalMsg, originalMsg)
+    const replySubject = `Re: ${originalMsg.subject || 'Follow up'}`
+    await scheduleReply(env, campaign.id, contact.id, finalMsg, replySubject, originalMsg.id || null, originalMsg.subject || null)
   } catch (err) {
-    console.error(`[reply-cron] Failed to send final message to ${contact.email}:`, err)
+    console.error(`[reply-cron] Failed to schedule final message for ${contact.email}:`, err)
   }
-
-  // Record final message to conversations
-  await recordAgentMessage(
-    env,
-    campaign.id,
-    contact.id,
-    finalMsg,
-    `Re: ${originalMsg.subject || 'Follow up'}`,
-    null,
-  )
 
   // Mark contact as stopped.
   // NOTE: auto_reply_count is NOT incremented here because it was already

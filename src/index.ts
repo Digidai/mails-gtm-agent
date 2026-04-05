@@ -9,6 +9,7 @@ import { handlePreviewRoutes } from './routes/preview'
 import { sendCron } from './scheduler/send-cron'
 import { agentCron } from './scheduler/agent-cron'
 import { replyCron } from './scheduler/reply-cron'
+import { replySendCron } from './scheduler/reply-send-cron'
 import { summaryCron } from './scheduler/summary-cron'
 import { sendConsumer } from './queue/send-consumer'
 import { evaluateConsumer } from './queue/evaluate-consumer'
@@ -168,6 +169,9 @@ export default {
     // All crons run from the single * * * * * trigger for reliability
     // v1 sequence engine (every minute)
     ctx.waitUntil(sendCron(env))
+
+    // Scheduled reply sender (every minute — checks for delayed replies ready to send)
+    ctx.waitUntil(replySendCron(env))
 
     // v2 agent engine (every 10 minutes)
     if (minute % 10 === 0) {
