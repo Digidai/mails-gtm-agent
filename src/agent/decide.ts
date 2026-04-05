@@ -171,36 +171,42 @@ const EMAIL_FRAMEWORKS = [
     description: 'Start with a specific question about their work, then naturally introduce the product as an answer',
     example_structure: 'Question about their role/company → one-line answer → link',
     subject_style: 'Ask a question (e.g., "How does [company] handle agent email?")',
+    sentence_range: [2, 3] as const,
   },
   {
     id: 'peer_note',
     description: 'Write as if one developer casually mentioning a tool to another. No pitch, just sharing',
     example_structure: 'Casual mention of what you built → why it might matter to them → link',
     subject_style: 'Casual and lowercase (e.g., "quick tool for agent email")',
+    sentence_range: [1, 2] as const,
   },
   {
     id: 'specific_scenario',
     description: 'Describe a concrete scenario relevant to their company/role, then show how the product fits',
     example_structure: 'Paint a specific scenario → how this tool helps in that exact case → link',
     subject_style: 'Scenario-based (e.g., "when your agents need to verify emails")',
+    sentence_range: [3, 4] as const,
   },
   {
     id: 'one_liner',
     description: 'Ultra-short. Two sentences max plus the link. Respect their time.',
     example_structure: 'One sentence about the product → link → sign off',
     subject_style: 'Direct and short (e.g., "open source email for AI agents")',
+    sentence_range: [1, 2] as const,
   },
   {
     id: 'social_proof',
     description: 'Lead with what others are doing with the product or a specific use case story',
     example_structure: 'What a developer/team used it for → what they got out of it → link',
     subject_style: 'Story-based (e.g., "how one team gave their agent a mailbox")',
+    sentence_range: [2, 4] as const,
   },
   {
     id: 'technical_hook',
     description: 'Lead with a specific technical capability that would matter to this person',
     example_structure: 'One specific feature → why it matters for their stack → link',
     subject_style: 'Technical and specific (e.g., "auto-extract verification codes from email")',
+    sentence_range: [2, 3] as const,
   },
 ]
 
@@ -329,8 +335,8 @@ export function sanitizeEmail(
   const sentences = bodyAfterGreeting
     .split(/(?<=[.!?])\s+/)
     .filter((s: string) => s.trim().length > 0)
-  if (sentences.length > 4) {
-    body = greeting + sentences.slice(0, 3).join(' ')
+  if (sentences.length > 5) {
+    body = greeting + sentences.slice(0, 4).join(' ')
   }
 
   // Ensure link is not on its own line
@@ -427,7 +433,7 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 4. If they replied "not interested" or "unsubscribe", stop immediately
 5. Do NOT repeat the same angle/approach as a previous email
 6. Every email MUST include the conversion link: ${campaign.conversion_url || '(not set)'}
-7. STRICT: Email body MUST be 2-3 sentences after the greeting line. Not 4, not 5. Count them. One short paragraph, no line breaks within.
+7. STRICT: Email body MUST be ${framework.sentence_range[0]}-${framework.sentence_range[1]} sentences after the greeting line. Count them. One short paragraph, no line breaks within.
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says
 10. End every email with exactly "Best,\n${campaign.product_name} team" — use this EXACT text, do not capitalize differently or change wording. Do NOT add footer, unsubscribe link, or physical address (those are added automatically)
@@ -446,7 +452,9 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 - NEVER start with generic pain-point statements. Banned: "Most developers...", "Most teams...", "Teams often...", "Building X is hard...", "If you're building...", "Are you building..."
 - Do NOT fabricate user stories or case studies. Only reference real, verifiable facts from the product knowledge base.
 - Subject line: use proper capitalization (Title Case or Sentence case). Do NOT write all-lowercase subjects.
-- STRICT LENGTH: Email body MUST be 2-3 sentences after the greeting. One short paragraph. No line breaks between sentences. The link should be woven into a sentence, NOT on its own line.
+- STRICT LENGTH: Email body MUST be ${framework.sentence_range[0]}-${framework.sentence_range[1]} sentences after the greeting. One short paragraph. No line breaks between sentences. The link should be woven into a sentence, NOT on its own line.
+- Occasionally use incomplete sentences. "Works great for auth flows." instead of always writing full grammatical sentences.
+- You can sometimes start a sentence with "And" or "But" — real people do this.
 
 ## Email Framework (MANDATORY — follow this structure)
 Framework: ${framework.id}

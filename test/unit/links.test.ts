@@ -63,7 +63,7 @@ describe('Link Tracking - URL Replacement', () => {
     // Should have replaced 2 unique URLs
     expect(result.linkIds).toHaveLength(2)
     expect(result.body).not.toContain('https://mails0.com')
-    expect(result.body).toContain('https://gtm.example.com/t/')
+    expect(result.body).toContain('https://gtm.example.com/r/')
     // DB.batch should have been called once with 2 statements
     expect(batchCalls).toHaveLength(1)
     expect(batchCalls[0]).toHaveLength(2)
