@@ -72,7 +72,7 @@ export async function replaceLinksWithTracking(
 
     replacements.push({
       original: url,
-      tracked: `${baseUrl}/t/${linkId}`,
+      tracked: `${baseUrl}/r/${linkId}`,
     })
   }
 
@@ -172,7 +172,7 @@ export async function replaceLinksWithTrackingDual(
 
     replacements.push({
       original: url,
-      tracked: `${baseUrl}/t/${linkId}`,
+      tracked: `${baseUrl}/r/${linkId}`,
     })
   }
 

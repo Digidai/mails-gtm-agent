@@ -102,10 +102,10 @@ export default {
       return jsonResponse({ status: 'ok', service: 'mails-gtm-agent', version: 'v2' })
     }
 
-    // Link tracking redirect: GET /t/:id
-    const trackMatch = path.match(/^\/t\/([a-f0-9]+)$/)
+    // Link tracking redirect: GET /r/:id (new) or /t/:id (legacy)
+    const trackMatch = path.match(/^\/(t|r)\/([a-f0-9]+)$/)
     if (trackMatch && request.method === 'GET') {
-      return handleTrackingRedirect(trackMatch[1], request, env)
+      return handleTrackingRedirect(trackMatch[2], request, env)
     }
 
     // Webhook: POST /webhook/event/:campaign_id
