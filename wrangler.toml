@@ -16,8 +16,7 @@ queue = "mails-gtm-send"
 queue = "mails-gtm-send"
 max_batch_size = 10
 max_retries = 3
-# TODO: uncomment after creating DLQ queues via Cloudflare Dashboard or API
-# dead_letter_queue = "mails-gtm-dlq-send"
+dead_letter_queue = "mails-gtm-dlq-send"
 
 # v2: evaluate queue (agent engine only)
 [[queues.producers]]
@@ -28,21 +27,18 @@ queue = "mails-gtm-evaluate"
 queue = "mails-gtm-evaluate"
 max_batch_size = 10
 max_retries = 3
-# TODO: uncomment after creating DLQ queues via Cloudflare Dashboard or API
-# dead_letter_queue = "mails-gtm-dlq-evaluate"
+dead_letter_queue = "mails-gtm-dlq-evaluate"
 
-# Dead letter queues — uncomment after creating queues:
-#   wrangler queues create mails-gtm-dlq-send
-#   wrangler queues create mails-gtm-dlq-evaluate
-# [[queues.consumers]]
-# queue = "mails-gtm-dlq-send"
-# max_batch_size = 10
-# max_retries = 0
-#
-# [[queues.consumers]]
-# queue = "mails-gtm-dlq-evaluate"
-# max_batch_size = 10
-# max_retries = 0
+# Dead letter queues
+[[queues.consumers]]
+queue = "mails-gtm-dlq-send"
+max_batch_size = 10
+max_retries = 0
+
+[[queues.consumers]]
+queue = "mails-gtm-dlq-evaluate"
+max_batch_size = 10
+max_retries = 0
 
 # Service binding to mails-worker (avoids error 1042 on worker-to-worker calls)
 [[services]]
