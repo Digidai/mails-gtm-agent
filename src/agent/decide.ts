@@ -139,12 +139,45 @@ export async function makeDecision(
 
     throw new Error('LLM response did not contain valid JSON')
   } catch (err) {
-    console.error('LLM decision failed, defaulting to wait:', err)
+    const msg = (err as Error).message || ''
+    const isRateLimit = msg.includes('429') || msg.includes('rate limit')
+    const isTimeout = (err as Error).name === 'AbortError' || msg.includes('abort') || msg.includes('timeout')
+    const isParseError = msg.includes('valid JSON') || msg.includes('Invalid')
+
+    if (isRateLimit) {
+      // Campaign-level cooldown: saturate daily LLM limit so agent-cron skips this campaign today.
+      // Resets at midnight via agent-cron's daily_llm_reset_at check.
+      console.error(`[LLM-429] Rate limited for campaign ${campaign.id}, cooling down until midnight`)
+      try {
+        await env.DB.prepare(
+          'UPDATE campaigns SET daily_llm_calls = daily_llm_limit WHERE id = ?',
+        ).bind(campaign.id).run()
+      } catch { /* best-effort cooldown */ }
+      return {
+        action: 'wait',
+        reasoning: `LLM rate limited (429). Campaign cooled down until daily reset.`,
+        wait_days: 1,
+        llm_called: true,
+      }
+    }
+
+    if (isTimeout) {
+      console.error(`[LLM-TIMEOUT] Decision timed out for contact ${contact.email}`)
+      return {
+        action: 'wait',
+        reasoning: `LLM call timed out. Will retry sooner.`,
+        wait_days: 1,
+        llm_called: true,
+      }
+    }
+
+    // Parse error or other: log full detail, wait longer
+    console.error(`[LLM-ERROR] Decision failed: ${msg}`, isParseError ? '(parse error)' : '')
     return {
       action: 'wait',
-      reasoning: `LLM decision failed: ${(err as Error).message}. Will retry later.`,
-      wait_days: 3,  // Increased from 1 to prevent retry storms on persistent LLM failures
-      llm_called: true, // LLM was called (even though it failed)
+      reasoning: `LLM decision failed: ${msg}. Will retry later.`,
+      wait_days: 3,
+      llm_called: true,
     }
   }
 }
