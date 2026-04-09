@@ -1,4 +1,4 @@
-import { Env } from '../types'
+import { Env, Campaign } from '../types'
 import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 
@@ -32,10 +32,10 @@ export async function dlqConsumer(batch: MessageBatch, env: Env): Promise<void> 
         try {
           const campaign = await env.DB.prepare(
             'SELECT * FROM campaigns WHERE id = ?',
-          ).bind(campaignId).first()
+          ).bind(campaignId).first<Campaign>()
 
           if (campaign) {
-            await notifyOwner(env, campaign as any, 'dlq_failure', {
+            await notifyOwner(env, campaign, 'dlq_failure', {
               contactEmail: (body.to as string) || contactId,
               errorMessage: `Message permanently failed after retries: ${messageType}. Check campaign events for details.`,
             })
