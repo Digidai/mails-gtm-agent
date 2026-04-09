@@ -28,8 +28,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          bunx wrangler queues create mails-gtm-dlq-send 2>/dev/null || true
-          bunx wrangler queues create mails-gtm-dlq-evaluate 2>/dev/null || true
+          bunx wrangler queues create mails-gtm-dlq-send || echo "Queue mails-gtm-dlq-send already exists or creation failed"
+          bunx wrangler queues create mails-gtm-dlq-evaluate || echo "Queue mails-gtm-dlq-evaluate already exists or creation failed"
+          echo "Waiting 5s for queue propagation..."
+          sleep 5
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
