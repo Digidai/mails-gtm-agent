@@ -1,7 +1,7 @@
 import { Env, Campaign } from './types'
 import { mailsFetch } from './mails-api'
 
-type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error' | 'knowledge_gap' | 'conversation_stopped'
+type NotifyType = 'interested_reply' | 'conversion' | 'campaign_error' | 'knowledge_gap' | 'conversation_stopped' | 'dlq_failure'
 
 /**
  * Fire an outgoing webhook callback if the campaign has a webhook_callback_url configured.
@@ -159,6 +159,18 @@ export async function notifyOwner(
         '',
         `Campaign: ${campaign.name}`,
         `Reason: ${data.reason || 'Unknown'}`,
+      ].join('\n')
+      break
+
+    case 'dlq_failure':
+      subject = `[mails-gtm] Message permanently failed: ${data.contactEmail}`
+      body = [
+        `A message for ${data.contactName || data.contactEmail} failed after all retries and was sent to the dead letter queue.`,
+        '',
+        `Campaign: ${campaign.name}`,
+        `Error: ${data.errorMessage || 'Unknown — check campaign events for details'}`,
+        '',
+        'Action: Investigate and manually re-trigger if needed.',
       ].join('\n')
       break
   }
