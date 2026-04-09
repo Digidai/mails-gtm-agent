@@ -23,16 +23,6 @@ jobs:
           D1_ID: ${{ secrets.D1_DATABASE_ID }}
         run: sed -i "s/YOUR_D1_DATABASE_ID/${D1_ID}/" wrangler.toml
 
-      - name: Ensure DLQ queues exist
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          bunx wrangler queues create mails-gtm-dlq-send || echo "Queue mails-gtm-dlq-send already exists or creation failed"
-          bunx wrangler queues create mails-gtm-dlq-evaluate || echo "Queue mails-gtm-dlq-evaluate already exists or creation failed"
-          echo "Waiting 5s for queue propagation..."
-          sleep 5
-
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
