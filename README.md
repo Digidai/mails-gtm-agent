@@ -10,7 +10,7 @@ Built on top of [mails-agent](https://github.com/Digidai/mails) for email delive
 - **Intelligent Reply Classification** -- Automatically classifies reply intent (interested, not now, unsubscribe, etc.) and takes appropriate action
 - **Multi-Step Campaigns** -- Define sequences with configurable delays between steps
 - **Warmup Scheduling** -- Gradually ramp up sending volume to protect sender reputation
-- **CAN-SPAM / GDPR Compliance** -- Automatic List-Unsubscribe headers, physical address footer, one-click unsubscribe, and GDPR data deletion
+- **CAN-SPAM Compliance Scaffolding** -- Automatic List-Unsubscribe + RFC 8058 one-click headers, physical address footer, unsubscribe endpoint with HMAC token, GDPR data deletion API. Note: compliance is your legal responsibility. See [LEGAL.md](LEGAL.md) for details
 - **CSV Import** -- Bulk import contacts with custom fields
 - **Self-Learning Agent** -- Learns from reply patterns, adapts messaging strategy over time
 - **Daily Summary** -- Automated digest of campaign performance, replies, and actions taken

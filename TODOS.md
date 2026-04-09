@@ -69,6 +69,57 @@ Deferred items from CEO Review (2026-04-03) and Codex Eng Review (2026-04-04).
 **Effort:** S (human: ~1 day / CC: ~30min)
 **Depends on:** None
 
+## CEO Review (2026-04-09) — New Items
+
+### [P0] Dead letter queue for Cloudflare Queues
+**What:** Add `dead_letter_queue` to both SEND_QUEUE and EVALUATE_QUEUE consumers in wrangler.toml. Create DLQ consumer that retries recoverable failures and alerts on permanent ones.
+**Why:** Currently max_retries=3 with no DLQ. When upstream (mails-worker or OpenRouter) has brief failures, messages are permanently dropped with zero trace. Contact's entire decision/send chain silently vanishes.
+**Context:** wrangler.toml needs 3 lines per consumer. New `dlq-consumer.ts` for retry/alert logic. Included in SCOPE CORRECTION alongside compliance rollback.
+**Effort:** S (human: ~1 day / CC: ~30min)
+**Depends on:** None
+
+### [P0] Compliance rollback (SCOPE CORRECTION)
+**What:** Restore compliance footer (physical address + unsubscribe link) and List-Unsubscribe headers (including RFC 8058 one-click) in send-consumer and reply-cron. Update README compliance claims. Add LEGAL.md.
+**Why:** Commits ee3142b + 7cc9b13 removed CAN-SPAM required elements. README still claims "CAN-SPAM / GDPR Compliance". Users unknowingly exposed to $51,744/email FTC penalties.
+**Context:** Compliance code (headers.ts, unsubscribe.ts) is intact as dead code. Restore = re-activate ~15 lines of call sites. Keep all non-compliance "humanization" improvements (sanitizeEmail, frameworks, reply delay, persona signing).
+**Effort:** S (human: ~1 day / CC: ~20min)
+**Depends on:** None
+
+### [P1] Integration tests for 5 core cron/consumer components
+**What:** Add test files for evaluate-consumer, agent-cron, send-consumer, reply-send-cron, send-cron. All unit-level components have tests, but the "assembly line" integration is untested.
+**Why:** Each component's internal logic is tested (decide.test, rules.test, compliance.test, etc.) but the wiring between them is not. Any mistake in message format, queue routing, or status transitions between components would go undetected.
+**Context:** 26 existing test files cover 36 src files. The 5 missing files are all cron triggers or queue consumers — the most critical integration points.
+**Effort:** M (human: ~3 days / CC: ~2h)
+**Depends on:** None
+
+### [P1] LLM error classification (429/timeout/parse differentiation)
+**What:** Replace generic catch blocks in makeDecision/classifyReply with error-type-specific handling. 429 → campaign-level cooldown flag. Timeout → retry with truncated prompt. Parse error → log full LLM response for debugging.
+**Why:** Current behavior: all LLM errors → fallback wait 3d. This means an OpenRouter outage makes the entire system stuck for 3 days per contact.
+**Context:** TODOS.md already has "Campaign-level LLM cooldown" as P1. This extends it to cover all error types, not just 429.
+**Effort:** M (human: ~2 days / CC: ~1h)
+**Depends on:** None
+
+### [P2] Global LLM quota guard
+**What:** Add a SUM(daily_llm_calls) check across all campaigns before individual campaign evaluation.
+**Why:** daily_llm_limit is per-campaign. 10 active campaigns each with limit=100 = 1000 LLM calls/day total. If OpenRouter account quota is lower, causes 429 storm.
+**Context:** evaluate-consumer already has claimLlmQuota (atomic per-campaign). Need a global version.
+**Effort:** S (human: ~1 day / CC: ~15min)
+**Depends on:** None
+
+### [P2] Health endpoint upgrade + post-deploy smoke test
+**What:** Extend GET /health to check D1 connectivity, Queue availability, and mails-worker service binding health. Return structured JSON with component status.
+**Why:** Current /health returns `{status: ok}` unconditionally. Post-deploy failures (broken D1 binding, wrong Queue name) are invisible until user reports.
+**Context:** Foundation for automated post-deploy verification.
+**Effort:** S (human: ~1 day / CC: ~30min)
+**Depends on:** None
+
+### [P2] Extract sanitizeForPrompt to shared module
+**What:** Move sanitizeForPrompt from decide.ts and generate.ts to a shared utils/sanitize.ts.
+**Why:** DRY violation. Identical function duplicated in two files. If one gets updated, the other drifts.
+**Context:** Both copies are currently identical (same patterns, same max length).
+**Effort:** XS (CC: ~10min)
+**Depends on:** None
+
 ### Reply-cron pagination
 **What:** Add pagination to reply-cron inbox fetch instead of fixed 100-message limit.
 **Why:** High-volume periods or webhook outages could cause messages to fall off the 100-message window.

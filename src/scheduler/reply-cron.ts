@@ -7,8 +7,8 @@ import { recordEvent } from '../events/record'
 import { notifyOwner } from '../notify'
 import { mailsFetch } from '../mails-api'
 import { recordContactMessage, recordAgentMessage, getConversationHistory } from '../conversations/context'
-// Unsubscribe token/URL no longer needed in replies
-// Compliance headers/footer no longer used in replies — real person replies don't have them
+import { generateUnsubscribeToken, generateUnsubscribeUrl } from '../compliance/unsubscribe'
+import { generateListUnsubscribeHeaders, generateComplianceFooter, generateComplianceFooterHtml } from '../compliance/headers'
 import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
 import { claimLlmQuota } from '../utils/llm-quota'
@@ -762,9 +762,11 @@ export async function sendAutoReply(
     }
   }
 
-  // No List-Unsubscribe header — real person replies don't have unsubscribe headers.
-  // Unsubscribe is handled by reply classification: if contact replies "stop" or
-  // "unsubscribe", classifyReply detects the intent and state machine processes it.
+  // CAN-SPAM compliance: generate unsubscribe token + List-Unsubscribe headers for replies
+  const unsubToken = await generateUnsubscribeToken(contact.email, campaign.id, env.UNSUBSCRIBE_SECRET)
+  const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
+  const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
+  Object.assign(headers, unsubHeaders)
 
   // Fix #6: Replace links with tracking and build HTML version
   let htmlBody: string | undefined
@@ -780,10 +782,11 @@ export async function sendAutoReply(
     htmlBody = html
   }
 
-  // No visible compliance footer in reply body — compliance via List-Unsubscribe header.
-  // A real person replying to an email would never add a physical address or unsubscribe link.
-  const fullBody = replyBody
-  const fullHtml = htmlBody || undefined
+  // CAN-SPAM compliance: physical address + unsubscribe link in reply body
+  const fullBody = replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
+  const fullHtml = htmlBody
+    ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
+    : undefined
 
   // Dry-run mode: log but don't actually send
   if (campaign.dry_run) {
