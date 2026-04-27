@@ -100,7 +100,7 @@ export default {
 
     // Health check
     if (path === '/' || path === '/health') {
-      return jsonResponse({ status: 'ok', service: 'mails-gtm-agent', version: 'v2' })
+      return handleHealth(env)
     }
 
     // Link tracking redirect: GET /r/:id (new) or /t/:id (legacy)
@@ -205,6 +205,34 @@ export default {
       await sendConsumer(batch, env)
     }
   },
+}
+
+async function handleHealth(env: Env): Promise<Response> {
+  const checks: Record<string, boolean> = {
+    db: false,
+    send_queue: Boolean(env.SEND_QUEUE),
+    evaluate_queue: Boolean(env.EVALUATE_QUEUE),
+    mails_worker: Boolean(env.MAILS_WORKER),
+  }
+
+  try {
+    const row = await env.DB.prepare('SELECT 1 AS ok').first<{ ok: number }>()
+    checks.db = row?.ok === 1
+  } catch (err) {
+    console.error('Health check failed:', err)
+  }
+
+  const healthy = checks.db && checks.send_queue && checks.evaluate_queue
+  return jsonResponse(
+    {
+      ok: healthy,
+      status: healthy ? 'ok' : 'unhealthy',
+      service: 'mails-gtm-agent',
+      version: 'v2',
+      checks,
+    },
+    healthy ? 200 : 503,
+  )
 }
 
 /**

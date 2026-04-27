@@ -33,15 +33,37 @@ async function verifySignature(
   const expected = Array.from(new Uint8Array(sig))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
+  const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature
 
   // Constant-time comparison via SHA-256 hashing to prevent length leakage
   const hashExpected = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(expected)))
-  const hashSignature = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(signature)))
+  const hashSignature = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(provided)))
   let diff = 0
   for (let i = 0; i < hashExpected.length; i++) {
     diff |= hashExpected[i] ^ hashSignature[i]
   }
   return diff === 0
+}
+
+async function verifyTimestampedSignature(
+  body: string,
+  signature: string,
+  secret: string,
+): Promise<boolean> {
+  const fields = new Map(
+    signature.split(',').map((part) => {
+      const [key, ...value] = part.split('=')
+      return [key, value.join('=')]
+    }),
+  )
+  const timestamp = fields.get('t')
+  const signed = fields.get('v1')
+  if (!timestamp || !signed) return false
+  const ts = Number(timestamp)
+  if (!Number.isFinite(ts)) return false
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - ts) > 300) return false
+  return verifySignature(`${timestamp}.${body}`, `sha256=${signed}`, secret)
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -62,7 +84,8 @@ export async function handleInboundWebhook(
 ): Promise<Response> {
   // 1. Verify HMAC signature
   const signature = request.headers.get('X-Webhook-Signature') || ''
-  if (!signature) {
+  const signatureV2 = request.headers.get('X-Webhook-Signature-V2') || ''
+  if (!signature && !signatureV2) {
     return jsonResponse({ error: 'Missing X-Webhook-Signature header' }, 401)
   }
 
@@ -72,7 +95,9 @@ export async function handleInboundWebhook(
   }
 
   const bodyText = await request.text()
-  const valid = await verifySignature(bodyText, signature, env.WEBHOOK_SECRET)
+  const valid = signatureV2
+    ? await verifyTimestampedSignature(bodyText, signatureV2, env.WEBHOOK_SECRET)
+    : await verifySignature(bodyText, signature, env.WEBHOOK_SECRET)
   if (!valid) {
     return jsonResponse({ error: 'Invalid signature' }, 401)
   }
