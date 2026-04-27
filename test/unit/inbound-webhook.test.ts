@@ -19,6 +19,15 @@ async function signPayload(body: string, secret: string): Promise<string> {
     .join('')
 }
 
+async function signPayloadWithPrefix(body: string, secret: string): Promise<string> {
+  return `sha256=${await signPayload(body, secret)}`
+}
+
+async function signTimestampedPayload(body: string, secret: string, timestamp: number): Promise<string> {
+  const signature = await signPayload(`${timestamp}.${body}`, secret)
+  return `t=${timestamp},v1=${signature}`
+}
+
 /**
  * Create a mock D1 database that handles the SQL queries used by handleInboundWebhook.
  */
@@ -252,6 +261,69 @@ describe('Inbound Webhook Handler', () => {
     // Verify event was recorded
     const eventQuery = mockDB.recordedQueries.find(q => q.sql.includes('INSERT INTO events'))
     expect(eventQuery).toBeTruthy()
+  })
+
+  test('accepts mails-agent sha256-prefixed HMAC signatures', async () => {
+    const mockDB = createMockDB({
+      dedupInserted: true,
+      contactResults: [makeContact()],
+      emailBody: 'I am interested in learning more.',
+    })
+    const env = createMockEnv(mockDB)
+    const body = JSON.stringify({
+      event: 'message.received',
+      email_id: 'email-prefixed',
+      from: 'alice@acme.com',
+      to: 'hi@test.com',
+      subject: 'Re: Our product',
+      received_at: new Date().toISOString(),
+    })
+    const request = new Request('https://test.com/webhook/inbound', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': await signPayloadWithPrefix(body, WEBHOOK_SECRET),
+      },
+      body,
+    })
+
+    const response = await handleInboundWebhook(request, env)
+    const data = await response.json() as any
+
+    expect(response.status).toBe(200)
+    expect(data.status).toBe('processed')
+  })
+
+  test('accepts replay-resistant v2 webhook signatures', async () => {
+    const mockDB = createMockDB({
+      dedupInserted: true,
+      contactResults: [makeContact()],
+      emailBody: 'I am interested in learning more.',
+    })
+    const env = createMockEnv(mockDB)
+    const body = JSON.stringify({
+      event: 'message.received',
+      email_id: 'email-v2',
+      from: 'alice@acme.com',
+      to: 'hi@test.com',
+      subject: 'Re: Our product',
+      received_at: new Date().toISOString(),
+    })
+    const timestamp = Math.floor(Date.now() / 1000)
+    const request = new Request('https://test.com/webhook/inbound', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature-V2': await signTimestampedPayload(body, WEBHOOK_SECRET, timestamp),
+      },
+      body,
+    })
+
+    const response = await handleInboundWebhook(request, env)
+    const data = await response.json() as any
+
+    expect(response.status).toBe(200)
+    expect(data.status).toBe('processed')
   })
 
   test('invalid HMAC signature returns 401', async () => {
