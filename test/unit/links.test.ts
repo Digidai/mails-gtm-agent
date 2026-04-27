@@ -114,3 +114,27 @@ describe('Link Tracking - URL Replacement', () => {
     expect(result.body).toBe(body)
   })
 })
+
+describe('Link Tracking - HTML Body', () => {
+  test('does not linkify tracking URLs inside generated anchors', async () => {
+    const { buildHtmlBody } = await import('../../src/tracking/links')
+    const html = buildHtmlBody('Visit https://mails0.com', [
+      { original: 'https://mails0.com', tracked: 'https://gtm.example.com/r/abcd1234' },
+    ])
+
+    expect(html).toBe('Visit <a href="https://gtm.example.com/r/abcd1234">mails0.com</a>')
+    expect(html).not.toContain('<a href="<a')
+  })
+
+  test('handles overlapping URL prefixes independently', async () => {
+    const { buildHtmlBody } = await import('../../src/tracking/links')
+    const html = buildHtmlBody('See https://mails0.com and https://mails0.com/docs', [
+      { original: 'https://mails0.com', tracked: 'https://gtm.example.com/r/aaaa1111' },
+      { original: 'https://mails0.com/docs', tracked: 'https://gtm.example.com/r/bbbb2222' },
+    ])
+
+    expect(html).toContain('<a href="https://gtm.example.com/r/aaaa1111">mails0.com</a>')
+    expect(html).toContain('<a href="https://gtm.example.com/r/bbbb2222">mails0.com/docs</a>')
+    expect(html).not.toContain('href="https://gtm.example.com/r/aaaa1111/docs"')
+  })
+})
