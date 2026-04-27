@@ -5,7 +5,7 @@ export interface Env {
   MAILS_WORKER?: Fetcher      // Service binding to mails-worker (avoids error 1042)
   OPENROUTER_API_KEY: string
   LLM_MODEL?: string          // default: 'anthropic/claude-sonnet-4'
-  MAILS_API_URL: string       // fallback: https://mails-worker.genedai.workers.dev
+  MAILS_API_URL: string       // fallback: https://api.mails0.com
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email
   ADMIN_TOKEN: string         // API auth token

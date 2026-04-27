@@ -63,7 +63,7 @@ async function checkAuth(request: Request, env: Env): Promise<boolean> {
 }
 
 async function setDefaults(env: Env, url?: URL): Promise<void> {
-  env.MAILS_API_URL = env.MAILS_API_URL || 'https://mails-worker.genedai.workers.dev'
+  env.MAILS_API_URL = env.MAILS_API_URL || 'https://api.mails0.com'
   if (!env.UNSUBSCRIBE_SECRET) {
     console.error('[SECURITY] UNSUBSCRIBE_SECRET not set! Deriving from ADMIN_TOKEN (not recommended for production)')
     // Derive a separate key rather than reusing ADMIN_TOKEN directly

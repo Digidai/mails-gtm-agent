@@ -59,9 +59,7 @@ export async function replaceLinksWithTracking(
     if (seenUrls.has(url)) continue
     seenUrls.add(url)
 
-    // 8 字符短 ID（4 字节 hex），10 万条以内碰撞概率可忽略
-    const linkId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
-      .map(b => b.toString(16).padStart(2, '0')).join('')
+    const linkId = generateLinkId()
     linkIds.push(linkId)
 
     stmts.push(
@@ -99,37 +97,44 @@ export function buildHtmlBody(
   textBody: string,
   trackedReplacements: Array<{ original: string; tracked: string }>,
 ): string {
-  // Escape HTML entities in the text
-  let html = textBody
+  const trackedByOriginal = new Map(trackedReplacements.map((r) => [r.original, r.tracked]))
+  let html = ''
+  let lastIndex = 0
+
+  for (const match of textBody.matchAll(URL_REGEX)) {
+    const url = match[0]
+    const index = match.index ?? 0
+    html += escapeHtml(textBody.slice(lastIndex, index))
+
+    const href = trackedByOriginal.get(url) ?? url
+    const displayText = trackedByOriginal.has(url) ? displayUrl(url) : url
+    html += `<a href="${escapeAttribute(href)}">${escapeHtml(displayText)}</a>`
+
+    lastIndex = index + url.length
+  }
+
+  html += escapeHtml(textBody.slice(lastIndex))
+  return html.replace(/\n/g, '<br>\n')
+}
+
+function displayUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname : '')
+  } catch {
+    return url
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+}
 
-  // Replace tracked URLs with anchor tags (display original domain, href = tracking)
-  for (const { original, tracked } of trackedReplacements) {
-    const escapedOriginal = original.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    let displayText: string
-    try {
-      const parsed = new URL(original)
-      displayText = parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname : '')
-    } catch {
-      displayText = original
-    }
-    // HTML-escape displayText to prevent stored XSS via malicious URLs
-    displayText = displayText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    html = html.split(escapedOriginal).join(`<a href="${tracked}">${displayText}</a>`)
-  }
-
-  // Convert remaining plain URLs to clickable links
-  html = html.replace(
-    /(https?:\/\/[^\s<>"&]+)/g,
-    (url) => `<a href="${url}">${url}</a>`,
-  )
-
-  // Wrap in minimal HTML and convert newlines to <br>
-  html = html.replace(/\n/g, '<br>\n')
-
-  return html
+function escapeAttribute(value: string): string {
+  return escapeHtml(value).replace(/"/g, '&quot;')
 }
 
 /**
@@ -159,9 +164,7 @@ export async function replaceLinksWithTrackingDual(
     if (seenUrls.has(url)) continue
     seenUrls.add(url)
 
-    // 8 字符短 ID（4 字节 hex），10 万条以内碰撞概率可忽略
-    const linkId = Array.from(crypto.getRandomValues(new Uint8Array(4)))
-      .map(b => b.toString(16).padStart(2, '0')).join('')
+    const linkId = generateLinkId()
     linkIds.push(linkId)
 
     stmts.push(
@@ -194,4 +197,8 @@ export async function replaceLinksWithTrackingDual(
  */
 export function isExcludedUrl(url: string): boolean {
   return EXCLUDE_PATTERNS.some(p => p.test(url))
+}
+
+function generateLinkId(): string {
+  return crypto.randomUUID().replace(/-/g, '')
 }

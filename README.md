@@ -107,7 +107,7 @@ wrangler secret put MAILS_MAILBOX
 | `MAILS_API_KEY` | Yes | -- | mails-agent API authentication token |
 | `MAILS_MAILBOX` | Yes | -- | Sender email address (e.g. `hi@genedai.space`) |
 | `ADMIN_TOKEN` | Yes | -- | Bearer token for authenticating API requests |
-| `MAILS_API_URL` | No | `https://mails-worker.genedai.workers.dev` | mails-agent base URL |
+| `MAILS_API_URL` | No | `https://api.mails0.com` | mails-agent base URL |
 | `UNSUBSCRIBE_BASE_URL` | No | Worker origin | Base URL for unsubscribe links |
 | `DAILY_SEND_LIMIT` | No | `100` | Global daily send cap across all campaigns |
 | `WEBHOOK_SECRET` | No | -- | HMAC-SHA256 secret for inbound webhook signature verification (must match mails-agent) |
