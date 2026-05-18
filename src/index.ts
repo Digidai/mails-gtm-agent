@@ -10,7 +10,6 @@ import { sendCron } from './scheduler/send-cron'
 import { agentCron } from './scheduler/agent-cron'
 import { replyCron } from './scheduler/reply-cron'
 import { replySendCron } from './scheduler/reply-send-cron'
-import { summaryCron } from './scheduler/summary-cron'
 import { sendConsumer } from './queue/send-consumer'
 import { evaluateConsumer } from './queue/evaluate-consumer'
 import { dlqConsumer } from './queue/dlq-consumer'
@@ -184,11 +183,6 @@ export default {
       ctx.waitUntil(replyCron(env))
     }
 
-    // Daily summary (once per day at 09:00 UTC)
-    const hour = new Date(event.scheduledTime).getUTCHours()
-    if (hour === 9 && minute === 0) {
-      ctx.waitUntil(summaryCron(env))
-    }
   },
 
   async queue(batch: MessageBatch, env: Env): Promise<void> {
