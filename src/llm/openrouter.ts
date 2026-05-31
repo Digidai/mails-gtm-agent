@@ -142,6 +142,11 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
     const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS)
 
     try {
+      // 4096 tokens covers KB extraction (~10 fields with nested arrays/FAQ)
+      // plus all other agent calls (decide / classify / reply / review)
+      // which never exceed ~500 tokens. The earlier 1024 cap silently
+      // truncated KB JSON mid-string, surfacing as "Unterminated string"
+      // SyntaxError downstream of extractJson().
       const res = await fetch(baseUrl, {
         method: 'POST',
         headers: {
@@ -150,7 +155,7 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
         },
         body: JSON.stringify({
           model: env?.LLM_MODEL || 'anthropic/claude-sonnet-4',
-          max_tokens: 1024,
+          max_tokens: 4096,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
