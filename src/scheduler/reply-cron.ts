@@ -540,9 +540,13 @@ async function scheduleReply(
   originalMsgId: string | null,
   originalSubject: string | null,
 ): Promise<void> {
-  // Random delay 2-8 hours to simulate human reply speed
-  const delayHours = 2 + Math.random() * 6
-  const sendAt = new Date(Date.now() + delayHours * 60 * 60 * 1000).toISOString()
+  // Random delay 2-8 hours to simulate human reply speed.
+  // DEV_MODE compresses this to 2-8 SECONDS for end-to-end smoke tests
+  // (see Env.DEV_MODE for the contract). Production never sets DEV_MODE.
+  const devMode = env.DEV_MODE === 'true'
+  const delayValue = 2 + Math.random() * 6
+  const delayMs = devMode ? delayValue * 1000 : delayValue * 60 * 60 * 1000
+  const sendAt = new Date(Date.now() + delayMs).toISOString()
 
   await env.DB.prepare(
     `INSERT INTO scheduled_replies (id, campaign_id, contact_id, reply_body, reply_subject, original_msg_id, original_subject, send_at)
@@ -558,7 +562,8 @@ async function scheduleReply(
     sendAt,
   ).run()
 
-  console.log(`[reply-cron] Scheduled auto-reply for contact ${contactId} at ${sendAt} (${delayHours.toFixed(1)}h delay)`)
+  const unitLabel = devMode ? 's' : 'h'
+  console.log(`[reply-cron] Scheduled auto-reply for contact ${contactId} at ${sendAt} (${delayValue.toFixed(1)}${unitLabel} delay)`)
 }
 
 /**

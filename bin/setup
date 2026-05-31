@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# bin/setup — idempotent first-time bootstrap for mails-gtm-agent.
+#
+# Brings a fresh clone from `git clone` to a working deployed worker
+# with one command:
+#
+#   ./bin/setup
+#
+# Each step checks current state and skips if already done, so reruns
+# are safe. Can be driven by an AI agent (Codex / Claude Code / etc)
+# OR a human.
+#
+# Pre-conditions:
+#   - `wrangler` and `bun` installed on PATH
+#   - Logged into a Cloudflare account (`wrangler whoami` works)
+#   - mails-agent already deployed elsewhere — you need its api_key
+#
+# Optional env (skip the interactive prompt by exporting these first):
+#   LLM_API_KEY              EasyRouter / OpenRouter / OpenAI key
+#   LLM_MODEL                e.g. claude-sonnet-4-6 (EasyRouter) or anthropic/claude-sonnet-4 (OpenRouter)
+#   MAILS_API_KEY            mails-agent api_key
+#   MAILS_MAILBOX            sender mailbox (e.g. you@mails0.com)
+#   ADMIN_TOKEN              random secret (32+ chars) for /api/* auth
+#   UNSUBSCRIBE_SECRET       random secret, MUST differ from ADMIN_TOKEN
+#   WEBHOOK_SECRET           must match mails-agent's WEBHOOK_SECRET
+
+set -e
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; RESET='\033[0m'
+ok()   { echo -e "  ${GREEN}✓${RESET} $1"; }
+info() { echo -e "  ${YELLOW}→${RESET} $1"; }
+err()  { echo -e "  ${RED}✗${RESET} $1"; }
+
+prompt_secret() {
+  # Read a secret from stdin if not already in env. Args: <env_var_name> <description>
+  local var="$1"; local desc="$2"
+  if [ -n "${!var:-}" ]; then return 0; fi
+  if [ -t 0 ]; then
+    echo -n "  $desc: "
+    read -rs val
+    echo ""
+    export "$var=$val"
+  else
+    err "$var not set and stdin not a TTY — export it before running setup"
+    return 1
+  fi
+}
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  mails-gtm-agent — first-time bootstrap"
+echo "════════════════════════════════════════════════════════════"
+echo ""
+
+# ─── 1. tool check ────────────────────────────────────────────
+echo "[1/8] checking tools..."
+command -v wrangler >/dev/null 2>&1 || { err "wrangler not found — install with 'npm install -g wrangler'"; exit 1; }
+command -v bun >/dev/null 2>&1      || { err "bun not found — install from https://bun.sh"; exit 1; }
+ok "wrangler $(wrangler --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) + bun $(bun --version)"
+
+# ─── 2. wrangler auth ────────────────────────────────────────
+echo "[2/8] checking Cloudflare auth..."
+if ! wrangler whoami >/dev/null 2>&1; then
+  err "not logged into Cloudflare — run 'wrangler login' first"
+  exit 1
+fi
+ok "logged in as $(wrangler whoami 2>&1 | grep -oE '[A-Za-z0-9._-]+@[A-Za-z0-9._-]+' | head -1 || echo 'unknown')"
+
+# ─── 3. bun install ──────────────────────────────────────────
+echo "[3/8] installing dependencies..."
+bun install >/dev/null 2>&1
+ok "dependencies installed"
+
+# ─── 4. D1 database ──────────────────────────────────────────
+echo "[4/8] D1 database..."
+D1_EXISTING=$(wrangler d1 list 2>&1 | grep -E '^\|\s*[a-f0-9-]{36}\s*\|\s*mails-gtm\s' | awk -F'|' '{print $2}' | tr -d ' ' || true)
+if [ -n "$D1_EXISTING" ]; then
+  D1_ID="$D1_EXISTING"
+  ok "D1 'mails-gtm' already exists: $D1_ID"
+else
+  info "creating D1 'mails-gtm'..."
+  D1_OUTPUT=$(wrangler d1 create mails-gtm 2>&1)
+  D1_ID=$(echo "$D1_OUTPUT" | grep -oE 'database_id = "[a-f0-9-]{36}"' | head -1 | grep -oE '[a-f0-9-]{36}')
+  if [ -z "$D1_ID" ]; then
+    err "failed to create D1 — output: $D1_OUTPUT"
+    exit 1
+  fi
+  ok "created D1: $D1_ID"
+fi
+
+# Inject the real D1 ID into wrangler.toml (in-place, idempotent).
+# We do NOT commit this — the toml ships with YOUR_D1_DATABASE_ID placeholder
+# and bin/setup + CI/CD substitute at deploy time.
+sed -i.bak "s/YOUR_D1_DATABASE_ID/${D1_ID}/" wrangler.toml
+rm -f wrangler.toml.bak
+ok "injected D1 ID into wrangler.toml"
+
+# ─── 5. queues ───────────────────────────────────────────────
+echo "[5/8] queues..."
+for q in mails-gtm-send mails-gtm-evaluate mails-gtm-dlq-send mails-gtm-dlq-evaluate; do
+  if wrangler queues list 2>&1 | grep -qE "^\|\s*$q\s"; then
+    ok "queue $q already exists"
+  else
+    info "creating queue $q..."
+    wrangler queues create "$q" >/dev/null 2>&1 && ok "created queue $q"
+  fi
+done
+
+# ─── 6. schema ───────────────────────────────────────────────
+echo "[6/8] applying schema..."
+bun run db:init >/dev/null 2>&1
+ok "schema applied to D1"
+
+# ─── 7. secrets ──────────────────────────────────────────────
+echo "[7/8] secrets..."
+EXISTING_SECRETS=$(wrangler secret list 2>&1 | grep -oE '"name": "[A-Z_]+"' | grep -oE '[A-Z_]+' | sort -u || true)
+
+set_if_missing() {
+  local var="$1"; local desc="$2"
+  if echo "$EXISTING_SECRETS" | grep -qx "$var"; then
+    ok "$var already set (skipping)"
+    return 0
+  fi
+  prompt_secret "$var" "$desc"
+  echo "${!var}" | wrangler secret put "$var" >/dev/null 2>&1
+  ok "$var set"
+}
+
+set_if_missing LLM_API_KEY        "LLM API key (EasyRouter/OpenRouter/OpenAI)"
+set_if_missing LLM_MODEL          "LLM model name (e.g. claude-sonnet-4-6 for EasyRouter)"
+set_if_missing MAILS_API_KEY      "mails-agent api_key"
+set_if_missing MAILS_MAILBOX      "sender mailbox (e.g. you@mails0.com)"
+set_if_missing MAILS_API_URL      "mails-agent base URL (default: https://api.mails0.com)"
+set_if_missing ADMIN_TOKEN        "ADMIN_TOKEN (random, 32+ chars; generate with: openssl rand -hex 32)"
+set_if_missing UNSUBSCRIBE_SECRET "UNSUBSCRIBE_SECRET (random; MUST differ from ADMIN_TOKEN)"
+set_if_missing UNSUBSCRIBE_BASE_URL "UNSUBSCRIBE_BASE_URL (worker URL, e.g. https://mails-gtm-agent.you.workers.dev)"
+set_if_missing WEBHOOK_SECRET     "WEBHOOK_SECRET (must match mails-agent's WEBHOOK_SECRET)"
+
+# ─── 8. deploy ───────────────────────────────────────────────
+echo "[8/8] deploying..."
+bun run deploy
+ok "deployed"
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  ${GREEN}done${RESET}"
+echo "════════════════════════════════════════════════════════════"
+echo ""
+echo "verify with:"
+echo "  bun run smoke         # end-to-end production smoke test"
+echo "  curl -H \"Authorization: Bearer \$ADMIN_TOKEN\" https://YOUR-WORKER/api/admin/info"
+echo ""
+echo "first campaign:"
+echo "  bun cli/index.ts campaign create --name foo --product-url https://github.com/yours --address 'Your Address'"
+echo "  bun cli/index.ts contacts import <id> --csv contacts.csv"
+echo "  bun cli/index.ts campaign start <id>"
+echo ""

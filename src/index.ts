@@ -6,6 +6,7 @@ import { handleGdprRoutes } from './routes/gdpr'
 import { handleStepsRoutes } from './routes/steps'
 import { handleStatsRoutes } from './routes/stats'
 import { handlePreviewRoutes } from './routes/preview'
+import { handleAdminInfo } from './routes/admin'
 import { sendCron } from './scheduler/send-cron'
 import { agentCron } from './scheduler/agent-cron'
 import { replyCron } from './scheduler/reply-cron'
@@ -131,6 +132,11 @@ export default {
         return jsonResponse({ error: 'Unauthorized' }, 401)
       }
 
+      // Admin info — single-call health + config dashboard for AI agents
+      if (path === '/api/admin/info') {
+        return handleAdminInfo(request, env)
+      }
+
       // Campaign sub-routes — match before generic campaign routes
       if (/^\/api\/campaign\/[a-f0-9]+\/steps$/.test(path)) {
         return handleStepsRoutes(request, env)
@@ -165,6 +171,7 @@ export default {
     await setDefaults(env)
 
     const minute = new Date(event.scheduledTime).getMinutes()
+    const devMode = env.DEV_MODE === 'true'
 
     // All crons run from the single * * * * * trigger for reliability
     // v1 sequence engine (every minute)
@@ -173,13 +180,13 @@ export default {
     // Scheduled reply sender (every minute — checks for delayed replies ready to send)
     ctx.waitUntil(replySendCron(env))
 
-    // v2 agent engine (every 10 minutes)
-    if (minute % 10 === 0) {
+    // v2 agent engine (every 10 minutes in production, every minute in DEV_MODE)
+    if (devMode || minute % 10 === 0) {
       ctx.waitUntil(agentCron(env))
     }
 
-    // Reply processing (every 5 minutes)
-    if (minute % 5 === 0) {
+    // Reply processing (every 5 minutes in production, every minute in DEV_MODE)
+    if (devMode || minute % 5 === 0) {
       ctx.waitUntil(replyCron(env))
     }
 

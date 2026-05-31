@@ -11,7 +11,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
-    "db:init": "wrangler d1 execute mails-gtm --file=schema.sql"
+    "db:init": "wrangler d1 execute mails-gtm --file=schema.sql",
+    "smoke": "bun scripts/smoke.ts",
+    "setup": "bash bin/setup"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20260426.1",

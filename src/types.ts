@@ -24,6 +24,20 @@ export interface Env {
   DAILY_SEND_LIMIT: string    // default: "100"
   MAX_CSV_SIZE: string        // default: "5242880" (5MB)
   MAX_CONTACTS_PER_IMPORT?: string  // default: "10000"
+
+  /**
+   * Developer / smoke-test acceleration mode.
+   *
+   * When set to the literal string "true":
+   *  - All cron gates (`minute % 10`, `minute % 5`) are bypassed so every
+   *    branch runs on the next * * * * * tick instead of waiting.
+   *  - `scheduleReply()` shrinks its 2-8 HOUR delay to 2-8 SECONDS so an
+   *    end-to-end dress rehearsal completes in one minute instead of overnight.
+   *
+   * NEVER enable on production — automation will appear robotic and will
+   * burn through quotas. Intended for `wrangler dev` and `bun run smoke`.
+   */
+  DEV_MODE?: string
 }
 
 export interface Campaign {
