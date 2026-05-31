@@ -124,7 +124,7 @@ Activate the campaign — the cron (runs every minute on Cloudflare) will
 pick up the contact and the agent will decide its first move:
 
 ```bash
-bun cli/index.ts campaign update <campaign-id> --status active
+bun cli/index.ts campaign start <campaign-id>
 ```
 
 Within 1-2 minutes, check your inbox.
@@ -167,7 +167,7 @@ wrangler tail
 ## Cleanup
 
 ```bash
-bun cli/index.ts campaign update <campaign-id> --status paused
+bun cli/index.ts campaign pause <campaign-id>
 ```
 
 To wipe data:
