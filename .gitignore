@@ -1,8 +1,41 @@
+# Dependencies
 node_modules/
+
+# Build artifacts
 dist/
+build/
+.next/
+out/
+
+# Cloudflare local state
 .wrangler/
 .dev.vars
+wrangler.dev.toml
+
+# Local env files — copy .env.example to .env (or set via wrangler secret)
+.env
+.env.local
+.env.*.local
+
+# Test / coverage output
+coverage/
+*.lcov
+.nyc_output/
+
+# Logs
 *.log
+npm-debug.log*
+bun-debug.log*
+
+# OS / editor cruft
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agent / tooling state (not part of project source)
 .gstack/
 .claude/
+.cursor/
