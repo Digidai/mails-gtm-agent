@@ -2,7 +2,12 @@ import { Env } from '../types'
 
 const DEFAULT_BASE_URL = 'https://easyrouter.io/v1/chat/completions'
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const LLM_TIMEOUT_MS = 20_000
+// 45s per attempt: knowledge-base extraction asks Claude Sonnet to emit a
+// fully-populated structured JSON (~10 fields including nested arrays) from
+// a fetched GitHub README. That regularly exceeds 20s. Queue consumer
+// wall-clock is plenty for 45s. Decide/classify/reply prompts finish well
+// under this budget.
+const LLM_TIMEOUT_MS = 45_000
 const MAX_RETRIES = 2
 const RETRY_DELAYS = [1000, 3000] // 1s, 3s backoff
 
