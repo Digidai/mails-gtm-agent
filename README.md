@@ -1,8 +1,43 @@
 # mails-gtm-agent
 
-Open-source AI SDR (Sales Development Representative) Agent. Runs on Cloudflare Workers, uses AI to generate personalized cold outreach emails, classify replies, and manage multi-step campaigns automatically.
+**Open-source AI SDR agent.** Give it a product URL and a CSV of contacts.
+It generates personalized cold emails, classifies replies, adapts strategy,
+and runs end-to-end on Cloudflare Workers — no monthly fee, your data stays
+in your account.
 
 Built on top of [mails-agent](https://github.com/Digidai/mails) for email delivery.
+
+```
+You: product URL + CSV
+     ↓
+Agent: reads product → writes email → tracks replies →
+       classifies intent → decides next action → repeats
+     ↓
+Result: interested replies + conversion events → webhook to your Slack/CRM
+```
+
+## Status
+
+- **Stage**: alpha — code is production-quality, but the project is being
+  dogfooded by its author. Suitable for self-hosters who want a transparent,
+  hackable cold-email agent and are comfortable reading the source.
+- **What works**: full end-to-end agent loop, CAN-SPAM compliance scaffolding,
+  CSV import, reply classification, tracked links, GDPR endpoint, MCP server,
+  dead-letter queues, integration tests.
+- **What's incomplete**: see [`TODOS.md`](./TODOS.md). High-value items in the
+  next sprint: multi-mailbox rotation, async knowledge-base generation,
+  campaign-level LLM cooldown.
+- **Real-world stats**: not yet — the maintainer's own production campaigns
+  are still small (single-digit contacts, mostly self-test). Once we run a
+  proper cohort we'll publish open metrics here.
+
+## 5-minute quickstart
+
+→ [`examples/quickstart.md`](./examples/quickstart.md)
+
+For the full architecture and runtime behavior:
+[`BUSINESS-FLOW.md`](./BUSINESS-FLOW.md) (English) ·
+[`BUSINESS-FLOW.zh.md`](./BUSINESS-FLOW.zh.md) (中文).
 
 ## Features
 
