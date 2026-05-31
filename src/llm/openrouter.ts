@@ -54,19 +54,35 @@ let _warnedDeprecation = false
 
 /**
  * Extract the first balanced JSON object from a string.
- * Unlike the greedy regex /\{[\s\S]*\}/, this correctly handles nested braces
- * and won't accidentally match from the first { to the last } across multiple objects.
+ *
+ * Handles two patterns the LLM may emit:
+ *   1. Raw JSON: `{...}` or with preamble text — find first `{`, walk braces.
+ *   2. Fenced markdown: ```json\n{...}\n``` (or just ```\n{...}\n```) —
+ *      strip the fence, then walk braces. EasyRouter-hosted Claude
+ *      defaults to fenced output even when asked for raw JSON; OpenRouter-hosted
+ *      Claude does too. Stripping the fence first also avoids edge cases
+ *      where backticks contain control characters that confuse JSON.parse.
+ *
+ * Unlike the greedy regex /\{[\s\S]*\}/, the brace walker correctly handles
+ * nested braces and won't accidentally match from the first { to the last }
+ * across multiple objects.
  */
 export function extractJson(text: string): string | null {
-  const start = text.indexOf('{')
+  // Strip ```json ... ``` or ``` ... ``` fences if present. The non-greedy match
+  // (.*?) stops at the FIRST closing ```, which is what we want — the LLM
+  // never emits multiple fenced blocks in one response in practice.
+  const fenceMatch = text.match(/```(?:json|JSON)?\s*([\s\S]*?)\s*```/)
+  const haystack = fenceMatch ? fenceMatch[1] : text
+
+  const start = haystack.indexOf('{')
   if (start === -1) return null
 
   let depth = 0
   let inString = false
   let escape = false
 
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
+  for (let i = start; i < haystack.length; i++) {
+    const ch = haystack[i]
 
     if (escape) {
       escape = false
@@ -89,13 +105,13 @@ export function extractJson(text: string): string | null {
     else if (ch === '}') {
       depth--
       if (depth === 0) {
-        return text.slice(start, i + 1)
+        return haystack.slice(start, i + 1)
       }
     }
   }
 
-  // Fallback: if balanced extraction fails, try greedy regex
-  const fallback = text.match(/\{[\s\S]*\}/)
+  // Fallback: if balanced extraction fails, try greedy regex on the de-fenced text
+  const fallback = haystack.match(/\{[\s\S]*\}/)
   return fallback ? fallback[0] : null
 }
 
