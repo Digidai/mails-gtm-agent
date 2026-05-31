@@ -3,8 +3,17 @@ export interface Env {
   SEND_QUEUE: Queue
   EVALUATE_QUEUE: Queue
   MAILS_WORKER?: Fetcher      // Service binding to mails-worker (avoids error 1042)
-  OPENROUTER_API_KEY: string
+  // LLM provider config — set ONE of:
+  //   (a) LLM_API_KEY + (optional) LLM_BASE_URL — provider-agnostic, recommended
+  //   (b) EASYROUTER_API_KEY — convenience alias for easyrouter.io
+  //   (c) OPENROUTER_API_KEY — deprecated, retained for backward compatibility
+  // See src/llm/openrouter.ts:resolveLlmConfig for resolution order.
+  LLM_API_KEY?: string
+  LLM_BASE_URL?: string       // default: 'https://easyrouter.io/v1/chat/completions'
   LLM_MODEL?: string          // default: 'anthropic/claude-sonnet-4'
+  EASYROUTER_API_KEY?: string
+  /** @deprecated Use LLM_API_KEY instead. */
+  OPENROUTER_API_KEY?: string
   MAILS_API_URL: string       // fallback: https://api.mails0.com
   MAILS_API_KEY: string
   MAILS_MAILBOX: string       // sender email

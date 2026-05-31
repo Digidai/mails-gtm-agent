@@ -72,7 +72,7 @@ describe('callLLM retry logic', () => {
       return new Response('Internal Server Error', { status: 500 })
     }) as any
 
-    await expect(callLLM(mockEnv(), 'system', 'user')).rejects.toThrow('OpenRouter API error 500')
+    await expect(callLLM(mockEnv(), 'system', 'user')).rejects.toThrow('LLM API error 500')
     expect(attempt).toBe(1) // no retry
   })
 

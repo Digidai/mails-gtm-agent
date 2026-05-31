@@ -50,8 +50,8 @@ Core differentiation: **open source · self-hosted · AI-native decisions · zer
 │  └──────────┘  └──────────┘  └────────────────────────┘   │
 │                                                            │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │              OpenRouter LLM                          │    │
-│  │      anthropic/claude-sonnet-4 (default)             │    │
+│  │       LLM gateway (OpenAI-API compatible)            │    │
+│  │  default: EasyRouter · model: claude-sonnet-4        │    │
 │  └────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -61,7 +61,7 @@ Core differentiation: **open source · self-hosted · AI-native decisions · zer
 | Runtime | Cloudflare Workers |
 | Storage | D1 (SQLite) |
 | Queueing | Cloudflare Queues (with dead letter queues) |
-| LLM | OpenRouter (default `anthropic/claude-sonnet-4`) |
+| LLM | Any OpenAI-API-compatible gateway. Default: EasyRouter with `anthropic/claude-sonnet-4`. Override via `LLM_BASE_URL` + `LLM_API_KEY` |
 | Email send/receive | [mails-agent](https://github.com/Digidai/mails) |
 
 ---

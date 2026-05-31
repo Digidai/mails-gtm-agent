@@ -1,9 +1,56 @@
 import { Env } from '../types'
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const DEFAULT_BASE_URL = 'https://easyrouter.io/v1/chat/completions'
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const LLM_TIMEOUT_MS = 20_000
 const MAX_RETRIES = 2
 const RETRY_DELAYS = [1000, 3000] // 1s, 3s backoff
+
+/**
+ * Resolve the LLM provider config (API key + base URL) from env.
+ *
+ * Order of preference (first hit wins):
+ * 1. LLM_API_KEY + LLM_BASE_URL — generic, provider-agnostic. Recommended.
+ * 2. EASYROUTER_API_KEY (alone) — auto-routes to easyrouter.io.
+ * 3. OPENROUTER_API_KEY (alone) — backward compat, auto-routes to openrouter.ai
+ *    and emits a one-time deprecation warning.
+ *
+ * The default base URL is EasyRouter. Override via LLM_BASE_URL to point at
+ * any OpenAI-API-compatible gateway (OpenAI itself, OpenRouter, EasyRouter,
+ * a self-hosted vLLM/LiteLLM, etc.).
+ */
+function resolveLlmConfig(env: Env): { apiKey: string; baseUrl: string } {
+  if (env.LLM_API_KEY) {
+    return {
+      apiKey: env.LLM_API_KEY,
+      baseUrl: env.LLM_BASE_URL || DEFAULT_BASE_URL,
+    }
+  }
+  if (env.EASYROUTER_API_KEY) {
+    return {
+      apiKey: env.EASYROUTER_API_KEY,
+      baseUrl: env.LLM_BASE_URL || DEFAULT_BASE_URL,
+    }
+  }
+  if (env.OPENROUTER_API_KEY) {
+    if (!_warnedDeprecation) {
+      console.warn(
+        '[LLM] OPENROUTER_API_KEY is deprecated — set LLM_API_KEY (and optionally LLM_BASE_URL) instead. ' +
+        'Routing requests to openrouter.ai for backward compatibility.',
+      )
+      _warnedDeprecation = true
+    }
+    return {
+      apiKey: env.OPENROUTER_API_KEY,
+      baseUrl: env.LLM_BASE_URL || OPENROUTER_BASE_URL,
+    }
+  }
+  throw new Error(
+    'No LLM API key configured. Set LLM_API_KEY (preferred) or EASYROUTER_API_KEY ' +
+    'via `wrangler secret put`. See README for details.',
+  )
+}
+let _warnedDeprecation = false
 
 /**
  * Extract the first balanced JSON object from a string.
@@ -52,7 +99,17 @@ export function extractJson(text: string): string | null {
   return fallback ? fallback[0] : null
 }
 
+/**
+ * Call the configured LLM with a system + user prompt. Returns the assistant
+ * message content. Retries on 429 with 1s / 3s backoff. Throws on hard
+ * failures after MAX_RETRIES.
+ *
+ * Provider is whichever OpenAI-API-compatible gateway is configured (see
+ * resolveLlmConfig). Defaults to EasyRouter; supports OpenRouter/OpenAI/etc
+ * via LLM_BASE_URL.
+ */
 export async function callLLM(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
+  const { apiKey, baseUrl } = resolveLlmConfig(env)
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -64,10 +121,10 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
     const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS)
 
     try {
-      const res = await fetch(OPENROUTER_URL, {
+      const res = await fetch(baseUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${env.OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -82,7 +139,7 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
       })
 
       if (res.status === 429) {
-        lastError = new Error('OpenRouter rate limited (429)')
+        lastError = new Error('LLM provider rate limited (429)')
         if (attempt < MAX_RETRIES) {
           console.warn(`[LLM] 429 rate limited, retrying in ${RETRY_DELAYS[attempt]}ms (attempt ${attempt + 1}/${MAX_RETRIES + 1})`)
           continue
@@ -92,13 +149,13 @@ export async function callLLM(env: Env, systemPrompt: string, userPrompt: string
 
       if (!res.ok) {
         const text = await res.text()
-        throw new Error(`OpenRouter API error ${res.status}: ${text}`)
+        throw new Error(`LLM API error ${res.status}: ${text}`)
       }
 
       const data = await res.json() as any
       const content = data?.choices?.[0]?.message?.content
       if (typeof content !== 'string' || !content.trim()) {
-        throw new Error('OpenRouter returned empty or invalid content')
+        throw new Error('LLM returned empty or invalid content')
       }
       return content
     } catch (err) {

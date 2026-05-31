@@ -15,7 +15,7 @@ After that you can swap in a real CSV and a real product URL.
 | Cloudflare account (Workers, D1, Queues enabled) | [dash.cloudflare.com](https://dash.cloudflare.com) — Workers Free is enough |
 | Wrangler CLI authenticated | `wrangler login` |
 | Bun ≥ 1.0 | [bun.sh](https://bun.sh) — `curl -fsSL https://bun.sh/install \| bash` |
-| OpenRouter API key | [openrouter.ai/keys](https://openrouter.ai/keys) — free tier works |
+| LLM API key | Default: [EasyRouter](https://easyrouter.io). Also works with [OpenRouter](https://openrouter.ai/keys), OpenAI, or any OpenAI-API-compatible gateway — see README's "LLM Provider" section for the env mapping |
 | mails-agent mailbox + api_key | [mails0.com](https://mails0.com) — claim a free hosted mailbox, or [self-host](https://github.com/Digidai/mails) |
 
 ---
@@ -63,7 +63,7 @@ Edit `wrangler.toml`, replace the placeholder:
 ## Step 4 — Set secrets (30s)
 
 ```bash
-wrangler secret put OPENROUTER_API_KEY        # paste your OpenRouter key
+wrangler secret put LLM_API_KEY                # paste your LLM gateway key (EasyRouter by default)
 wrangler secret put MAILS_API_KEY              # paste your mails-agent api_key (mk_...)
 wrangler secret put MAILS_MAILBOX              # e.g. you@mails0.com
 wrangler secret put ADMIN_TOKEN                # any random 32+ char string
@@ -182,7 +182,7 @@ wrangler d1 execute mails-gtm --command="DELETE FROM campaign_contacts; DELETE F
 
 | Symptom | Fix |
 |---------|-----|
-| `Missing OPENROUTER_API_KEY` | You set it as `.env` instead of via `wrangler secret put`. Secrets live in CF, not local files. |
+| `No LLM API key configured` | You set it as `.env` instead of via `wrangler secret put`. Secrets live in CF, not local files. |
 | Email never sends | Check `wrangler tail`. Most often: `MAILS_API_KEY` is wrong, or your mails-agent mailbox is still in the 24h warm-up window (you cannot send for 24h after claim). |
 | `Name already claimed` when creating campaign | The campaign already exists. `bun cli/index.ts campaign list` to see them. |
 | `Knowledge base generation failed` | Product URL returns non-HTML, is behind auth, or LLM hit a rate limit. Pass `--description "..."` to skip the auto-KB step. |

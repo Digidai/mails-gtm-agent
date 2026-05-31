@@ -41,7 +41,7 @@ For the full architecture and runtime behavior:
 
 ## Features
 
-- **AI-Powered Email Generation** -- Uses Claude via OpenRouter to craft personalized cold emails based on recipient context
+- **AI-Powered Email Generation** -- Uses Claude (via EasyRouter, OpenRouter, or any OpenAI-API-compatible gateway) to craft personalized cold emails based on recipient context
 - **Intelligent Reply Classification** -- Automatically classifies reply intent (interested, not now, unsubscribe, etc.) and takes appropriate action
 - **Multi-Step Campaigns** -- Define sequences with configurable delays between steps
 - **Warmup Scheduling** -- Gradually ramp up sending volume to protect sender reputation
@@ -76,19 +76,40 @@ Webhook ────> /webhook/event   ──> conversion tracking
 | Runtime | Cloudflare Workers |
 | Database | Cloudflare D1 (SQLite) |
 | Queue | Cloudflare Queues |
-| LLM | OpenRouter (Claude Sonnet) |
+| LLM | EasyRouter (default), OpenRouter, or any OpenAI-API-compatible gateway (Claude Sonnet by default) |
 | Email | mails-agent API |
 
 ### LLM Provider
 
-All LLM calls go through a unified provider interface (`src/llm/provider.ts`). By default, it uses OpenRouter with automatic 429 retry (2 attempts, exponential backoff).
+All LLM calls go through a unified provider interface (`src/llm/provider.ts`)
+that talks to any OpenAI-API-compatible gateway. The default is
+[EasyRouter](https://easyrouter.io). Automatic 429 retry (2 attempts, 1s+3s
+backoff). Override via env to point at OpenRouter, OpenAI directly, vLLM,
+LiteLLM, Together, or anything else that speaks `POST /v1/chat/completions`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `OPENROUTER_API_KEY` | Required | OpenRouter API key |
-| `LLM_MODEL` | `anthropic/claude-sonnet-4` | Model to use via OpenRouter |
+| `LLM_API_KEY` | _Required_ | API key for the configured gateway |
+| `LLM_BASE_URL` | `https://easyrouter.io/v1/chat/completions` | Full path to the `chat/completions` endpoint |
+| `LLM_MODEL` | `anthropic/claude-sonnet-4` | Model name your gateway accepts |
+| `EASYROUTER_API_KEY` | _(alternate)_ | Convenience alias — set this alone to use EasyRouter |
+| `OPENROUTER_API_KEY` | _(deprecated)_ | Backward-compat fallback — set this alone to route to openrouter.ai with a deprecation warning |
 
-To use a different LLM provider, modify `src/llm/provider.ts`.
+Examples:
+
+```bash
+# EasyRouter (default)
+wrangler secret put LLM_API_KEY                   # paste EasyRouter key
+
+# OpenAI directly
+wrangler secret put LLM_API_KEY                   # paste OpenAI key
+wrangler secret put LLM_BASE_URL                  # https://api.openai.com/v1/chat/completions
+wrangler secret put LLM_MODEL                     # gpt-4o
+
+# OpenRouter (still works via the env above)
+wrangler secret put LLM_API_KEY                   # paste OpenRouter key
+wrangler secret put LLM_BASE_URL                  # https://openrouter.ai/api/v1/chat/completions
+```
 
 ## Quick Start
 
@@ -97,7 +118,7 @@ To use a different LLM provider, modify `src/llm/provider.ts`.
 - [Bun](https://bun.sh) (runtime + test runner)
 - [Wrangler](https://developers.cloudflare.com/workers/wrangler/) (Cloudflare CLI)
 - A Cloudflare account with Workers, D1, and Queues enabled
-- An [OpenRouter](https://openrouter.ai) API key
+- An API key for an OpenAI-API-compatible LLM gateway. Default config uses [EasyRouter](https://easyrouter.io); [OpenRouter](https://openrouter.ai) and OpenAI itself also work (see [LLM Provider](#llm-provider))
 - A [mails-agent](https://github.com/Digidai/mails) instance
 
 ### Installation
@@ -128,22 +149,26 @@ bun run db:init
 4. Set secrets:
 
 ```bash
-wrangler secret put OPENROUTER_API_KEY
+wrangler secret put LLM_API_KEY                       # see "LLM Provider" above
 wrangler secret put MAILS_API_KEY
 wrangler secret put ADMIN_TOKEN
 wrangler secret put MAILS_MAILBOX
+wrangler secret put UNSUBSCRIBE_SECRET
 ```
 
 ### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OPENROUTER_API_KEY` | Yes | -- | OpenRouter API key for LLM calls |
+| `LLM_API_KEY` | Yes (one of three) | -- | API key for your LLM gateway. See [LLM Provider](#llm-provider) for the full set including `EASYROUTER_API_KEY` and the deprecated `OPENROUTER_API_KEY` fallback |
+| `LLM_BASE_URL` | No | `https://easyrouter.io/v1/chat/completions` | Override to target a different OpenAI-API-compatible gateway |
+| `LLM_MODEL` | No | `anthropic/claude-sonnet-4` | Model name as accepted by your gateway |
 | `MAILS_API_KEY` | Yes | -- | mails-agent API authentication token |
 | `MAILS_MAILBOX` | Yes | -- | Sender email address (e.g. `hi@genedai.space`) |
 | `ADMIN_TOKEN` | Yes | -- | Bearer token for authenticating API requests |
 | `MAILS_API_URL` | No | `https://api.mails0.com` | mails-agent base URL |
 | `UNSUBSCRIBE_BASE_URL` | No | Worker origin | Base URL for unsubscribe links |
+| `UNSUBSCRIBE_SECRET` | Yes | -- | HMAC secret for unsubscribe tokens (must differ from `ADMIN_TOKEN`) |
 | `DAILY_SEND_LIMIT` | No | `100` | Global daily send cap across all campaigns |
 | `WEBHOOK_SECRET` | No | -- | HMAC-SHA256 secret for inbound webhook signature verification (must match mails-agent) |
 
