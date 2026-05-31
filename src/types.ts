@@ -127,6 +127,14 @@ export interface EvaluateMessage {
   enqueued_at: string
 }
 
+// v2.4 async knowledge-base generation (off the HTTP request path)
+export interface GenerateKbMessage {
+  type: 'generate_kb'
+  campaign_id: string
+  product_url: string
+  enqueued_at: string
+}
+
 export type IntentType =
   | 'interested'
   | 'not_now'

@@ -48,11 +48,13 @@ export async function sendCron(env: Env): Promise<void> {
     // 5. Check for not_now contacts whose resume_at has passed
     // State machine allows not_now -> pending (resume expiry exception).
     // Bulk UPDATE is used here for efficiency; canTransition('not_now', 'pending') === true.
+    // updated_at uses ISO `now` (declared at top of fn) to stay consistent with
+    // last_enqueued_at / last_sent_at timestamps (see state-machine.ts).
     await env.DB.prepare(`
       UPDATE campaign_contacts
-      SET status = 'pending', resume_at = NULL, updated_at = datetime('now')
+      SET status = 'pending', resume_at = NULL, updated_at = ?
       WHERE campaign_id = ? AND status = 'not_now' AND resume_at IS NOT NULL AND resume_at <= ?
-    `).bind(campaign.id, now).run()
+    `).bind(now, campaign.id, now).run()
 
     // 6. Select pending contacts ready to send
     const pendingContacts = await env.DB.prepare(`
@@ -72,9 +74,9 @@ export async function sendCron(env: Env): Promise<void> {
 
       const updateResult = await env.DB.prepare(`
         UPDATE campaign_contacts
-        SET status = 'queued', updated_at = datetime('now')
+        SET status = 'queued', updated_at = ?
         WHERE id = ? AND status = 'pending'
-      `).bind(contact.id).run()
+      `).bind(now, contact.id).run()
 
       if (!updateResult.meta?.changes) continue
 

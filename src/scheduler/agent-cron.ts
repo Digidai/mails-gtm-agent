@@ -33,14 +33,16 @@ export async function agentCron(env: Env): Promise<void> {
         continue
       }
 
-      // 3. Restore not_now contacts whose resume_at has passed
+      // 3. Restore not_now contacts whose resume_at has passed.
       // State machine allows not_now -> pending (resume expiry exception).
       // Bulk UPDATE is used here for efficiency; canTransition('not_now', 'pending') === true.
+      // updated_at uses the ISO `now` already declared at the top so it stays
+      // consistent with last_enqueued_at writes below (see state-machine.ts).
       await env.DB.prepare(`
         UPDATE campaign_contacts
-        SET status = 'pending', resume_at = NULL, next_check_at = NULL, updated_at = datetime('now')
+        SET status = 'pending', resume_at = NULL, next_check_at = NULL, updated_at = ?
         WHERE campaign_id = ? AND status = 'not_now' AND resume_at IS NOT NULL AND resume_at <= ?
-      `).bind(campaign.id, now).run()
+      `).bind(now, campaign.id, now).run()
 
       // 4. Select contacts due for evaluation
       // P1-5: 'interested' is now terminal — agent should NOT continue evaluating interested contacts.
@@ -58,11 +60,17 @@ export async function agentCron(env: Env): Promise<void> {
       if (!contacts.results?.length) continue
 
       // 5. Enqueue each contact for evaluation
+      // Pre-compute the 15-min cutoff in JS so the comparison string format
+      // matches `last_enqueued_at` (both ISO-8601 T+Z). Using
+      // SQLite's datetime(?, '-15 minutes') coerces back to space-separated
+      // format and the resulting string comparison silently fails because
+      // 'T' (0x54) > ' ' (0x20) — bug surfaced in the 2026-05-31 dress rehearsal.
+      const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString()
       for (const contact of contacts.results) {
         // Atomic update: mark as enqueued to prevent duplicates
         const updateResult = await env.DB.prepare(
-          'UPDATE campaign_contacts SET last_enqueued_at = ? WHERE id = ? AND (last_enqueued_at IS NULL OR last_enqueued_at < datetime(?, \'-15 minutes\'))',
-        ).bind(now, contact.id, now).run()
+          'UPDATE campaign_contacts SET last_enqueued_at = ? WHERE id = ? AND (last_enqueued_at IS NULL OR last_enqueued_at < ?)',
+        ).bind(now, contact.id, cutoff).run()
 
         if (!updateResult.meta?.changes) continue // Already enqueued recently
 

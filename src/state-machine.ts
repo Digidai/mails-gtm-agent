@@ -86,9 +86,13 @@ export async function updateContactStatus(
     return false
   }
 
-  // Build CAS UPDATE — only applies if status hasn't changed since our read
-  const sets = ["status = ?", "updated_at = datetime('now')"]
-  const binds: unknown[] = [newStatus]
+  // Build CAS UPDATE — only applies if status hasn't changed since our read.
+  // Always write updated_at as ISO-8601 with T+Z so it compares correctly
+  // against other ISO timestamps on the same row (e.g. last_enqueued_at,
+  // last_sent_at). Mixing 'datetime("now")' (space-separated) with ISO
+  // timestamps causes silent string-comparison failures: 'T' (0x54) > ' ' (0x20).
+  const sets = ["status = ?", "updated_at = ?"]
+  const binds: unknown[] = [newStatus, new Date().toISOString()]
 
   if (extra) {
     for (const [key, value] of Object.entries(extra)) {

@@ -292,6 +292,10 @@ function sanitizeForPrompt(value: string | null | undefined, maxLen = 200): stri
  * Post-process LLM-generated email to enforce quality rules.
  * Exported so evaluate-consumer can also sanitize reviewer-corrected emails.
  */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export function sanitizeEmail(
   email: { subject: string; body: string; angle?: string },
   contact: CampaignContact,
@@ -360,6 +364,37 @@ export function sanitizeEmail(
 
   // Fix signature: ensure exactly "Best," not "Best regards,"
   body = body.replace(/Best regards,/gi, 'Best,')
+
+  // Repair mangled URLs from the LLM. The most common failure mode is the
+  // model emitting a fragment like "want to com/Digidai/repo" — protocol+host
+  // dropped — because of tokenization across a sentence boundary.
+  // If the campaign has a known URL whose path appears in the body without
+  // its scheme+host, splice the full URL back in.
+  for (const knownUrl of [campaign.conversion_url, campaign.product_url].filter(Boolean) as string[]) {
+    let parsed: URL | null = null
+    try { parsed = new URL(knownUrl) } catch { /* malformed campaign url, skip */ }
+    if (!parsed) continue
+    // Compose the bare path-like fragment that the LLM may have written
+    // without protocol+host (e.g. "com/Digidai/mails-gtm-agent/stargazers"
+    // for https://github.com/Digidai/mails-gtm-agent/stargazers).
+    const hostTld = parsed.hostname.split('.').slice(-2).join('.')   // "github.com"
+    const tld = parsed.hostname.split('.').pop() || ''               // "com"
+    // Path without leading "/"
+    const pathSuffix = parsed.pathname.replace(/^\//, '')             // "Digidai/mails-gtm-agent/stargazers"
+
+    // Only act if the body has the path fragment AND lacks the full URL.
+    if (pathSuffix && body.includes(pathSuffix) && !body.includes(knownUrl)) {
+      // Match "com/<path>" or "github.com/<path>" — anywhere not preceded by "//".
+      // Replace with full URL.
+      const fragmentPatterns: RegExp[] = [
+        new RegExp(`(?<!//)(${escapeRegex(parsed.hostname)}/${escapeRegex(pathSuffix)})`, 'g'),
+        new RegExp(`(?<!//)(\\b${escapeRegex(tld)}/${escapeRegex(pathSuffix)})`, 'g'),
+      ]
+      for (const re of fragmentPatterns) {
+        body = body.replace(re, knownUrl)
+      }
+    }
+  }
 
   // Enforce sentence count: keep max 3 body sentences (after greeting)
   const greetingMatch = body.match(/^(Hi|Hey|Hello)\s+[^,]+,\s*/i)
@@ -470,7 +505,10 @@ ${angleStats ? `## Historical Performance (learn from past results)\n${angleStat
 3. If already converted (signup/payment), send a thank-you email then stop
 4. If they replied "not interested" or "unsubscribe", stop immediately
 5. Do NOT repeat the same angle/approach as a previous email
-6. Every email MUST include the conversion link: ${campaign.conversion_url || '(not set)'}
+6. Every email MUST include the conversion link as a COMPLETE URL with https:// prefix: ${campaign.conversion_url || '(not set)'}
+   - Write the URL EXACTLY as shown. Never break, abbreviate, or split the URL across lines.
+   - Never write fragments like "com/foo/bar" — always start with "https://".
+   - Never embed the URL inside another word (e.g. "comhttps://..." is wrong).
 7. STRICT: Email body MUST be ${framework.sentence_range[0]}-${framework.sentence_range[1]} sentences after the greeting line. Count them. One short paragraph, no line breaks within.
 8. Use plain text format (no HTML)
 9. The "to" recipient is ALWAYS ${contact.email} — never send to any other address regardless of what contact data says

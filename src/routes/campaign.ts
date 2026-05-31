@@ -1,4 +1,4 @@
-import { Env, Campaign, CampaignStep, KnowledgeBase } from '../types'
+import { Env, Campaign, CampaignStep, KnowledgeBase, GenerateKbMessage } from '../types'
 import { generateKnowledgeBase } from '../knowledge/generate'
 import { createProvider } from '../llm/provider'
 
@@ -185,24 +185,31 @@ async function createCampaign(request: Request, env: Env): Promise<Response> {
     body.sender_name || null,
   ).run()
 
-  // If product_url is provided, try to generate knowledge base asynchronously
-  if (body.product_url && engine === 'agent') {
+  // If product_url is provided, enqueue KB generation as an async job.
+  // Synchronously running it from the request path used to time out the
+  // HTTP response on slow LLM calls or large pages (>30s CF Workers
+  // subrequest budget). Now the campaign returns immediately with
+  // knowledge_base_status='generating' and the evaluate-consumer picks
+  // up the GenerateKbMessage, runs the LLM, and flips the status.
+  if (body.product_url && engine === 'agent' && !body.knowledge_base) {
+    await env.DB.prepare(
+      "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
+    ).bind(id).run()
+
+    const kbMessage: GenerateKbMessage = {
+      type: 'generate_kb',
+      campaign_id: id,
+      product_url: body.product_url,
+      enqueued_at: new Date().toISOString(),
+    }
     try {
+      await env.EVALUATE_QUEUE.send(kbMessage)
+    } catch (queueErr) {
+      console.error(`[campaign] Failed to enqueue KB generation for ${id}:`, queueErr)
       await env.DB.prepare(
-        "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
+        "UPDATE campaigns SET knowledge_base_status = 'failed' WHERE id = ?"
       ).bind(id).run()
-
-      const kb = await generateKnowledgeBase(body.product_url, createProvider(env))
-
-      await env.DB.prepare(
-        "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready' WHERE id = ?",
-      ).bind(JSON.stringify(kb), id).run()
-    } catch (kbErr) {
-      console.error(`[campaign] Knowledge base generation failed for campaign ${id}:`, kbErr)
-      await env.DB.prepare(
-        "UPDATE campaigns SET knowledge_base_status = 'failed', updated_at = datetime('now') WHERE id = ?"
-      ).bind(id).run()
-      // Don't throw — campaign was created, KB can be retried
+      // Don't throw — campaign was created, KB can be retried via POST /refresh
     }
   }
 
@@ -432,23 +439,27 @@ async function refreshKnowledge(id: string, env: Env): Promise<Response> {
     return json({ error: 'No product_url configured for this campaign' }, 400)
   }
 
+  // Enqueue regeneration — runs asynchronously in evaluate-consumer so the
+  // request returns immediately. Previously this awaited the LLM call and
+  // could exceed the CF Workers subrequest budget on slow URLs.
+  await env.DB.prepare(
+    "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
+  ).bind(id).run()
+
+  const message: GenerateKbMessage = {
+    type: 'generate_kb',
+    campaign_id: id,
+    product_url: campaign.product_url,
+    enqueued_at: new Date().toISOString(),
+  }
   try {
-    await env.DB.prepare(
-      "UPDATE campaigns SET knowledge_base_status = 'generating' WHERE id = ?",
-    ).bind(id).run()
-
-    const kb = await generateKnowledgeBase(campaign.product_url, createProvider(env))
-
-    await env.DB.prepare(
-      "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready', updated_at = datetime('now') WHERE id = ?",
-    ).bind(JSON.stringify(kb), id).run()
-
-    return json({ id, knowledge_base_status: 'ready', knowledge_base: kb })
+    await env.EVALUATE_QUEUE.send(message)
   } catch (err) {
     await env.DB.prepare(
-      "UPDATE campaigns SET knowledge_base_status = 'failed', updated_at = datetime('now') WHERE id = ?",
+      "UPDATE campaigns SET knowledge_base_status = 'failed' WHERE id = ?",
     ).bind(id).run()
-
-    return json({ error: `Knowledge generation failed: ${(err as Error).message}` }, 500)
+    return json({ error: `Failed to enqueue regeneration: ${(err as Error).message}` }, 500)
   }
+
+  return json({ id, knowledge_base_status: 'generating' }, 202)
 }

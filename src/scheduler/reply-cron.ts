@@ -489,10 +489,11 @@ export async function handleIntent(
 
     case 'out_of_office':
     case 'auto_reply':
-      // No status change — just record classification metadata
+      // No status change — just record classification metadata.
+      // ISO-8601 with T+Z to match all other timestamps on campaign_contacts.
       await env.DB.prepare(
-        "UPDATE campaign_contacts SET reply_intent = ?, reply_confidence = ?, updated_at = datetime('now') WHERE id = ?",
-      ).bind(intent, confidence, contact.id).run()
+        "UPDATE campaign_contacts SET reply_intent = ?, reply_confidence = ?, updated_at = ? WHERE id = ?",
+      ).bind(intent, confidence, new Date().toISOString(), contact.id).run()
       break
 
     case 'unclear':
@@ -572,11 +573,12 @@ export async function processAutoReply(
   intent: IntentType,
   originalMsg: any,
 ): Promise<void> {
-  // Fix #3: Atomic auto_reply_count claim — only proceed if we successfully increment
+  // Fix #3: Atomic auto_reply_count claim — only proceed if we successfully increment.
+  // updated_at written as ISO-8601 T+Z (see state-machine.ts for the why).
   const maxReplies = campaign.max_auto_replies ?? 5
   const claimResult = await env.DB.prepare(
-    "UPDATE campaign_contacts SET auto_reply_count = auto_reply_count + 1, updated_at = datetime('now') WHERE id = ? AND auto_reply_count < ?"
-  ).bind(contact.id, maxReplies).run()
+    "UPDATE campaign_contacts SET auto_reply_count = auto_reply_count + 1, updated_at = ? WHERE id = ? AND auto_reply_count < ?"
+  ).bind(new Date().toISOString(), contact.id, maxReplies).run()
 
   if (!claimResult.meta?.changes) {
     console.log(`[reply-cron] Auto-reply limit reached for contact ${contact.id}, skipping reply`)

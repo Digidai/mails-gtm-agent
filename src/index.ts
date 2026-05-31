@@ -282,10 +282,12 @@ async function handleTrackingRedirect(linkId: string, request: Request, env: Env
         tracking_id: linkId,
       })
 
-      // Update contact last_click_at
+      // Update contact last_click_at — ISO-8601 with T+Z to stay consistent
+      // with all other timestamp writes on campaign_contacts (see state-machine.ts).
+      const clickNow = new Date().toISOString()
       await env.DB.prepare(
-        "UPDATE campaign_contacts SET last_click_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
-      ).bind(link.contact_id).run()
+        "UPDATE campaign_contacts SET last_click_at = ?, updated_at = ? WHERE id = ?",
+      ).bind(clickNow, clickNow, link.contact_id).run()
     }
   } catch (err) {
     // Don't block redirect on event recording failure

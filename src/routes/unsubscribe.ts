@@ -61,10 +61,11 @@ export async function handleUnsubscribeRoute(request: Request, env: Env): Promis
     // Update contact status across ALL campaigns for this email.
     // This is a CAN-SPAM compliance bulk operation — intentionally bypasses
     // per-contact state machine to guarantee unsubscribe always succeeds.
+    // updated_at written as ISO-8601 T+Z (see state-machine.ts for the why).
     await env.DB.prepare(`
-      UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = datetime('now')
+      UPDATE campaign_contacts SET status = 'unsubscribed', updated_at = ?
       WHERE email = ?
-    `).bind(payload.email).run()
+    `).bind(new Date().toISOString(), payload.email).run()
   } catch (err) {
     console.error('Unsubscribe error:', err)
     return new Response(

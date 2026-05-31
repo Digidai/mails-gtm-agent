@@ -2,6 +2,7 @@ import {
   Env,
   EvaluateMessage,
   AgentSendMessage,
+  GenerateKbMessage,
   Campaign,
   CampaignContact,
   Event,
@@ -12,6 +13,7 @@ import { replaceLinksWithTrackingDual } from '../tracking/links'
 import { recordEvent } from '../events/record'
 import { reviewEmail, buildSafeEmail } from '../llm/review'
 import { createProvider } from '../llm/provider'
+import { generateKnowledgeBase } from '../knowledge/generate'
 import { TERMINAL_STATUSES, updateContactStatus } from '../state-machine'
 import { claimLlmQuota } from '../utils/llm-quota'
 
@@ -21,17 +23,61 @@ import { claimLlmQuota } from '../utils/llm-quota'
  * and acts on the decision (send/wait/stop).
  */
 export async function evaluateConsumer(
-  batch: MessageBatch<EvaluateMessage>,
+  batch: MessageBatch<EvaluateMessage | GenerateKbMessage>,
   env: Env,
 ): Promise<void> {
   for (const msg of batch.messages) {
     try {
-      await processEvaluateMessage(msg.body, env)
+      const body = msg.body as { type?: string }
+      if (body && body.type === 'generate_kb') {
+        await processGenerateKbMessage(msg.body as GenerateKbMessage, env)
+      } else {
+        await processEvaluateMessage(msg.body as EvaluateMessage, env)
+      }
       msg.ack()
     } catch (err) {
       console.error('Evaluate consumer error:', err)
       msg.retry()
     }
+  }
+}
+
+/**
+ * Generate a campaign's knowledge_base off the HTTP request path.
+ * Runs the LLM-backed extractor and writes the result back to D1.
+ * On failure, marks knowledge_base_status='failed' and lets the queue retry.
+ */
+async function processGenerateKbMessage(message: GenerateKbMessage, env: Env): Promise<void> {
+  const { campaign_id, product_url } = message
+  console.log(`[evaluate-consumer] Generating KB for campaign ${campaign_id} from ${product_url}`)
+
+  // Confirm the campaign still wants this (not deleted/manual KB injected)
+  const row = await env.DB.prepare(
+    "SELECT knowledge_base_status FROM campaigns WHERE id = ?",
+  ).bind(campaign_id).first<{ knowledge_base_status: string }>()
+  if (!row) {
+    console.log(`[evaluate-consumer] Campaign ${campaign_id} gone, skipping KB gen`)
+    return
+  }
+  if (!['pending', 'generating', 'failed'].includes(row.knowledge_base_status)) {
+    console.log(`[evaluate-consumer] Campaign ${campaign_id} status='${row.knowledge_base_status}', skipping KB gen`)
+    return
+  }
+
+  const provider = createProvider(env)
+  try {
+    const kb = await generateKnowledgeBase(product_url, provider)
+    await env.DB.prepare(
+      "UPDATE campaigns SET knowledge_base = ?, knowledge_base_status = 'ready' WHERE id = ?",
+    ).bind(JSON.stringify(kb), campaign_id).run()
+    console.log(`[evaluate-consumer] KB ready for campaign ${campaign_id}`)
+  } catch (err) {
+    console.error(`[evaluate-consumer] KB gen failed for ${campaign_id}:`, err)
+    await env.DB.prepare(
+      "UPDATE campaigns SET knowledge_base_status = 'failed' WHERE id = ?",
+    ).bind(campaign_id).run()
+    // Allow queue to retry on transient errors by re-throwing
+    throw err
   }
 }
 
