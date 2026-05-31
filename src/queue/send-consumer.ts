@@ -150,13 +150,14 @@ async function processAgentSend(message: AgentSendMessage, env: Env, msg: Messag
     }
   }
 
-  // Generate compliance elements
+  // CAN-SPAM compliance: physical address + unsubscribe link in email body
+  // per 15 U.S.C. § 7704(a)(5). List-Unsubscribe + List-Unsubscribe-Post
+  // headers per RFC 2369 + RFC 8058 (one-click unsubscribe).
   const unsubToken = await generateUnsubscribeToken(to, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
 
-  // Build HTML version (tracked links in <a> tags + clean footer)
   let fullHtml: string | undefined
   if (htmlBody) {
     fullHtml = htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
@@ -401,12 +402,11 @@ async function processSequenceSend(message: SendMessage, env: Env, msg: Message)
 
   const { subject, body } = await generateEmail(createProvider(env), campaign, contact, step_number)
 
+  // CAN-SPAM compliance: same as v2 agent send
   const unsubToken = await generateUnsubscribeToken(contact.email, campaign_id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
   const fullBody = body + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
-
-  // Build HTML version with clean footer (v1 has no tracked links, just clean unsubscribe)
   const fullHtml = buildHtmlBody(body, []) + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
 
   // Dry-run mode: log but don't send (parity with v2 agent send)

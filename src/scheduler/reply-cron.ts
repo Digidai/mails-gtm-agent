@@ -762,7 +762,7 @@ export async function sendAutoReply(
     }
   }
 
-  // Generate compliance elements
+  // CAN-SPAM compliance: generate unsubscribe token + List-Unsubscribe headers for replies
   const unsubToken = await generateUnsubscribeToken(contact.email, campaign.id, env.UNSUBSCRIBE_SECRET)
   const unsubUrl = generateUnsubscribeUrl(env.UNSUBSCRIBE_BASE_URL, unsubToken)
   const unsubHeaders = generateListUnsubscribeHeaders(unsubUrl)
@@ -782,13 +782,10 @@ export async function sendAutoReply(
     htmlBody = html
   }
 
-  // Add compliance footer only on first reply (subsequent replies omit it for natural conversation)
-  const includeFooter = !options?.skipComplianceFooter
-  const fullBody = includeFooter
-    ? replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
-    : replyBody
+  // CAN-SPAM compliance: physical address + unsubscribe link in reply body
+  const fullBody = replyBody + generateComplianceFooter(campaign.physical_address, unsubUrl)
   const fullHtml = htmlBody
-    ? (includeFooter ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl) : htmlBody)
+    ? htmlBody + generateComplianceFooterHtml(campaign.physical_address, unsubUrl)
     : undefined
 
   // Dry-run mode: log but don't actually send

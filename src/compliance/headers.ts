@@ -1,9 +1,7 @@
 /**
- * Generate List-Unsubscribe header.
- * Only includes List-Unsubscribe (URL), NOT List-Unsubscribe-Post.
- * Reason: List-Unsubscribe-Post triggers Gmail to show an "Unsubscribe" button
- * and classify the message as bulk/promotional mail — fatal for cold outreach
- * deliverability.
+ * Generate List-Unsubscribe and List-Unsubscribe-Post headers.
+ * Includes RFC 8058 one-click unsubscribe (List-Unsubscribe-Post) as required
+ * by Gmail/Yahoo bulk sender guidelines (2024+) and recommended by RFC 8058.
  */
 export function generateListUnsubscribeHeaders(unsubscribeUrl: string, mailtoAddress?: string): Record<string, string> {
   const urls = mailtoAddress
@@ -12,7 +10,7 @@ export function generateListUnsubscribeHeaders(unsubscribeUrl: string, mailtoAdd
 
   return {
     'List-Unsubscribe': urls,
-    // Intentionally omitting List-Unsubscribe-Post to avoid Gmail bulk classification
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
   }
 }
 

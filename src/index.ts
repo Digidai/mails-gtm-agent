@@ -13,6 +13,7 @@ import { replySendCron } from './scheduler/reply-send-cron'
 import { summaryCron } from './scheduler/summary-cron'
 import { sendConsumer } from './queue/send-consumer'
 import { evaluateConsumer } from './queue/evaluate-consumer'
+import { dlqConsumer } from './queue/dlq-consumer'
 import { handleWebhookEvent } from './events/webhook'
 import { handleInboundWebhook } from './routes/inbound-webhook'
 import { handleBounceWebhook } from './routes/bounce-webhook'
@@ -196,7 +197,9 @@ export default {
     // Check queue name to route to correct consumer
     const queueName = (batch as any).queue || ''
 
-    if (queueName === 'mails-gtm-evaluate' || (batch.messages[0]?.body as any)?.type === 'evaluate') {
+    if (queueName === 'mails-gtm-dlq-send' || queueName === 'mails-gtm-dlq-evaluate') {
+      await dlqConsumer(batch, env)
+    } else if (queueName === 'mails-gtm-evaluate' || (batch.messages[0]?.body as any)?.type === 'evaluate') {
       await evaluateConsumer(batch as MessageBatch<EvaluateMessage>, env)
     } else {
       await sendConsumer(batch, env)

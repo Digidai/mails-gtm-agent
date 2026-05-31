@@ -55,11 +55,16 @@ describe('Unsubscribe URL', () => {
 })
 
 describe('List-Unsubscribe Headers', () => {
-  test('generates List-Unsubscribe header without Post (avoids Gmail bulk classification)', () => {
+  test('generates List-Unsubscribe and List-Unsubscribe-Post headers (RFC 2369 + RFC 8058)', () => {
     const headers = generateListUnsubscribeHeaders('https://example.com/unsubscribe?token=abc')
     expect(headers['List-Unsubscribe']).toBe('<https://example.com/unsubscribe?token=abc>')
-    // List-Unsubscribe-Post is intentionally omitted to avoid Gmail bulk classification
-    expect(headers['List-Unsubscribe-Post']).toBeUndefined()
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
+  })
+
+  test('generates List-Unsubscribe with mailto when provided', () => {
+    const headers = generateListUnsubscribeHeaders('https://example.com/unsub', 'unsub@example.com')
+    expect(headers['List-Unsubscribe']).toBe('<https://example.com/unsub>, <mailto:unsub@example.com?subject=unsubscribe>')
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
 })
 
